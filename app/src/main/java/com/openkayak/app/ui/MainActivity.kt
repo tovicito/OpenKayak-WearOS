@@ -101,7 +101,8 @@ import org.osmdroid.views.overlay.Polyline
 
 class MainActivity : ComponentActivity() {
 
-    private var locationService: LocationService? = null
+    // Reactive Compose state for async service binding
+    private val locationServiceState = mutableStateOf<LocationService?>(null)
     private var isBound = false
     private lateinit var hrManager: HeartRateManager
 
@@ -124,12 +125,12 @@ class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as LocationService.LocalBinder
-            locationService = binder.getService()
+            locationServiceState.value = binder.getService()
             isBound = true
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            locationService = null
+            locationServiceState.value = null
             isBound = false
         }
     }
@@ -146,8 +147,9 @@ class MainActivity : ComponentActivity() {
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         setContent {
+            val activeService = locationServiceState.value
             OpenKayakApp(
-                locationService = locationService,
+                locationService = activeService,
                 hrManager = hrManager,
                 isAmbient = isAmbientMode.value,
                 onStartWorkout = {
@@ -173,7 +175,7 @@ class MainActivity : ComponentActivity() {
                     startService(resumeIntent)
                 },
                 onStopWorkout = { workoutState, hrBpm ->
-                    val points = locationService?.getTrackPoints() ?: emptyList()
+                    val points = activeService?.getTrackPoints() ?: emptyList()
                     val jsonRoute = pointsToJson(points)
                     val avgSpeed = if (workoutState.elapsedTimeSeconds > 0) {
                         (workoutState.distanceMeters / workoutState.elapsedTimeSeconds) * 3.6f
@@ -280,7 +282,6 @@ fun OpenKayakApp(
     val workoutState by (locationService?.workoutState ?: MutableStateFlow(WorkoutState())).collectAsState()
     val hrState by hrManager.hrState.collectAsState()
 
-    // Water Touch Lock State (Locked when workout tracking is active)
     var isWaterTouchLocked by remember { mutableStateOf(false) }
     var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
 
@@ -294,7 +295,6 @@ fun OpenKayakApp(
         }
     }
 
-    // 1-minute (60s) unlock countdown timer
     LaunchedEffect(unlockTimeRemainingSeconds) {
         if (unlockTimeRemainingSeconds > 0) {
             delay(1000L)
@@ -305,7 +305,8 @@ fun OpenKayakApp(
         }
     }
 
-    val pagerState = rememberPagerState(pageCount = { 4 })
+    // Standard PagerState initializer with pageCount lambda
+    val pagerState = rememberPagerState(initialPage = 0) { 4 }
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
 
@@ -360,16 +361,10 @@ fun OpenKayakApp(
                             0 -> DashboardScreen(
                                 workoutState = workoutState,
                                 hrState = hrState,
-                                isWaterLocked = isWaterTouchLocked,
-                                unlockTimeRemainingSeconds = unlockTimeRemainingSeconds,
                                 onStartWorkout = onStartWorkout,
                                 onPauseWorkout = onPauseWorkout,
                                 onResumeWorkout = onResumeWorkout,
-                                onStopWorkout = { onStopWorkout(workoutState, hrState.heartRateBpm) },
-                                onUnlockWaterTouch = {
-                                    isWaterTouchLocked = false
-                                    unlockTimeRemainingSeconds = 60
-                                }
+                                onStopWorkout = { onStopWorkout(workoutState, hrState.heartRateBpm) }
                             )
                             1 -> MapScreen(workoutState = workoutState, locationService = locationService)
                             2 -> HistoryScreen()
@@ -386,7 +381,6 @@ fun OpenKayakApp(
                         unselectedColor = Color.Gray
                     )
 
-                    // Water Lock Full-Screen Overlay when locked during active kayaking
                     if (isWaterTouchLocked && workoutState.isTracking) {
                         WaterTouchLockOverlay(
                             onUnlock3SecComplete = {
@@ -401,9 +395,6 @@ fun OpenKayakApp(
     }
 }
 
-/**
- * Water Touch Lock Overlay with 3-Second Hold Unlock for Kayak Paddling
- */
 @Composable
 fun WaterTouchLockOverlay(
     onUnlock3SecComplete: () -> Unit
@@ -491,13 +482,10 @@ fun WaterTouchLockOverlay(
 fun DashboardScreen(
     workoutState: WorkoutState,
     hrState: com.openkayak.app.ble.BleHeartRateState,
-    isWaterLocked: Boolean,
-    unlockTimeRemainingSeconds: Int,
     onStartWorkout: () -> Unit,
     onPauseWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
-    onStopWorkout: () -> Unit,
-    onUnlockWaterTouch: () -> Unit
+    onStopWorkout: () -> Unit
 ) {
     val heartPulseScale by animateFloatAsState(
         targetValue = if (hrState.isPulseActive) 1.25f else 1.0f,
@@ -516,7 +504,6 @@ fun DashboardScreen(
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Row 1: Speed & Heart Rate
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -524,7 +511,6 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quadrant 1: Speed (km/h)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -556,7 +542,6 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Quadrant 2: Heart Rate (BPM)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -599,7 +584,6 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(3.dp))
 
-            // Row 2: Stroke Cadence (Paladas / SPM) & Distance/Time
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -607,7 +591,6 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quadrant 3: Stroke Cadence (Paladas / SPM)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -639,7 +622,6 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Quadrant 4: Distance & Timer
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -667,7 +649,6 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Controls
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
@@ -825,6 +806,16 @@ fun MapScreen(
                     setTileSource(TileSourceFactory.MAPNIK)
                     setMultiTouchControls(true)
                     controller.setZoom(16.0)
+
+                    // Allow horizontal page swiping when touch is near edges
+                    setOnTouchListener { v, event ->
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> v.parent.requestDisallowInterceptTouchEvent(true)
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.parent.requestDisallowInterceptTouchEvent(false)
+                        }
+                        false
+                    }
+
                     if (trackPoints.isNotEmpty()) {
                         val last = trackPoints.last()
                         controller.setCenter(GeoPoint(last.latitude, last.longitude))
