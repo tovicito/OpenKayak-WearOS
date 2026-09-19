@@ -25,6 +25,7 @@ import com.openkayak.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,8 +49,7 @@ data class WorkoutState(
     val distanceMeters: Float = 0.0f,
     val elapsedTimeSeconds: Long = 0L,
     val strokeRateSpm: Int = 0,
-    val totalStrokes: Int = 0,
-    val locationList: List<GpsPoint> = emptyList()
+    val totalStrokes: Int = 0
 )
 
 class LocationService : Service() {
@@ -59,16 +59,21 @@ class LocationService : Service() {
     private lateinit var locationCallback: LocationCallback
     private lateinit var strokeDetector: StrokeDetector
 
-    private val serviceScope = CoroutineScope(Dispatchers.Default + Job())
+    private val serviceJob = Job()
+    private val serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
+
     private var timerJob: Job? = null
     private var strokeCollectorJob: Job? = null
 
-    // Moving average filter window size = 5
+    private val locationHistory = mutableListOf<GpsPoint>()
+
     private val speedWindow = ArrayDeque<Float>(5)
     private var lastLocation: Location? = null
 
     private val _workoutState = MutableStateFlow(WorkoutState())
     val workoutState: StateFlow<WorkoutState> = _workoutState.asStateFlow()
+
+    fun getTrackPoints(): List<GpsPoint> = synchronized(locationHistory) { locationHistory.toList() }
 
     inner class LocalBinder : Binder() {
         fun getService(): LocationService = this@LocationService
@@ -106,10 +111,9 @@ class LocationService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "OpenKayak Training",
-                NotificationManager.IMPORTANCE_HIGH
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Muestra el estado del entrenamiento de kayak en tiempo real."
-                enableVibration(false)
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
@@ -134,11 +138,11 @@ class LocationService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Kayak Activo - OpenKayak")
-            .setContentText("Vel: $speedStr | Dist: $distStr | Cad: $spmStr")
+            .setContentText("Vel: $speedStr | Dist: $distStr | SPM: $spmStr")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setOngoing(true)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_WORKOUT)
             .build()
     }
@@ -146,6 +150,10 @@ class LocationService : Service() {
     @SuppressLint("MissingPermission")
     private fun startWorkout() {
         if (_workoutState.value.isTracking) return
+
+        synchronized(locationHistory) { locationHistory.clear() }
+        speedWindow.clear()
+        lastLocation = null
 
         _workoutState.update {
             WorkoutState(
@@ -156,12 +164,9 @@ class LocationService : Service() {
                 distanceMeters = 0.0f,
                 elapsedTimeSeconds = 0L,
                 strokeRateSpm = 0,
-                totalStrokes = 0,
-                locationList = emptyList()
+                totalStrokes = 0
             )
         }
-        speedWindow.clear()
-        lastLocation = null
 
         startForegroundServiceInternal()
         startLocationUpdates()
@@ -188,11 +193,11 @@ class LocationService : Service() {
     private fun startForegroundServiceInternal() {
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
+            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+            }
+            startForeground(NOTIFICATION_ID, notification, type)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -202,7 +207,7 @@ class LocationService : Service() {
     private fun startLocationUpdates() {
         val locationRequest = LocationRequest.Builder(
             Priority.PRIORITY_HIGH_ACCURACY,
-            1000L // 1 segundo
+            1000L
         ).apply {
             setMinUpdateIntervalMillis(1000L)
             setWaitForAccurateLocation(false)
@@ -213,6 +218,56 @@ class LocationService : Service() {
             locationCallback,
             Looper.getMainLooper()
         )
+    }
+
+    private fun processNewLocation(location: Location) {
+        if (_workoutState.value.isPaused) return
+
+        // Filter 1: Accuracy check <= 15 meters
+        if (location.hasAccuracy() && location.accuracy > 15f) return
+
+        var rawSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
+        var addedDistance = 0f
+
+        lastLocation?.let { prev ->
+            val dist = prev.distanceTo(location)
+            // Motion filter reduced to 0.7m so low-speed paddling (e.g. 3 km/h) is accurately tracked
+            if (dist >= 0.7f && dist < 100f) {
+                addedDistance = dist
+                val timeDiffSec = (location.time - prev.time) / 1000f
+                if (timeDiffSec > 0f && !location.hasSpeed()) {
+                    rawSpeedKmh = (dist / timeDiffSec) * 3.6f
+                }
+            }
+        }
+        lastLocation = location
+
+        if (speedWindow.size >= 5) {
+            speedWindow.removeFirst()
+        }
+        speedWindow.addLast(rawSpeedKmh)
+        val smoothedSpeedKmh = speedWindow.average().toFloat()
+
+        val gpsPoint = GpsPoint(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            altitude = location.altitude,
+            timestamp = location.time
+        )
+
+        synchronized(locationHistory) {
+            locationHistory.add(gpsPoint)
+        }
+
+        _workoutState.update { current ->
+            val newDist = current.distanceMeters + addedDistance
+            val newMax = maxOf(current.maxSpeedKmh, smoothedSpeedKmh)
+            current.copy(
+                speedKmh = smoothedSpeedKmh,
+                maxSpeedKmh = newMax,
+                distanceMeters = newDist
+            )
+        }
     }
 
     private fun pauseWorkout() {
@@ -256,52 +311,6 @@ class LocationService : Service() {
         }
     }
 
-    private fun processNewLocation(location: Location) {
-        if (_workoutState.value.isPaused) return
-
-        var rawSpeedKmh = if (location.hasSpeed()) {
-            location.speed * 3.6f
-        } else 0f
-
-        var addedDistance = 0f
-        lastLocation?.let { prev ->
-            val dist = prev.distanceTo(location)
-            if (dist > 0.5f && dist < 100f) {
-                addedDistance = dist
-                val timeDiffSec = (location.time - prev.time) / 1000f
-                if (timeDiffSec > 0f && !location.hasSpeed()) {
-                    rawSpeedKmh = (dist / timeDiffSec) * 3.6f
-                }
-            }
-        }
-        lastLocation = location
-
-        if (speedWindow.size >= 5) {
-            speedWindow.removeFirst()
-        }
-        speedWindow.addLast(rawSpeedKmh)
-        val smoothedSpeedKmh = speedWindow.average().toFloat()
-
-        val gpsPoint = GpsPoint(
-            latitude = location.latitude,
-            longitude = location.longitude,
-            altitude = location.altitude,
-            timestamp = location.time
-        )
-
-        _workoutState.update { current ->
-            val newDist = current.distanceMeters + addedDistance
-            val newMax = maxOf(current.maxSpeedKmh, smoothedSpeedKmh)
-            val newList = current.locationList + gpsPoint
-            current.copy(
-                speedKmh = smoothedSpeedKmh,
-                maxSpeedKmh = newMax,
-                distanceMeters = newDist,
-                locationList = newList
-            )
-        }
-    }
-
     private fun updateNotification() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, buildNotification())
@@ -311,8 +320,7 @@ class LocationService : Service() {
         super.onDestroy()
         fusedLocationClient.removeLocationUpdates(locationCallback)
         strokeDetector.stop()
-        timerJob?.cancel()
-        strokeCollectorJob?.cancel()
+        serviceScope.cancel()
     }
 
     companion object {

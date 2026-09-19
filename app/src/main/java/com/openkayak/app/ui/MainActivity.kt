@@ -86,6 +86,7 @@ import com.openkayak.app.data.KayakDatabase
 import com.openkayak.app.data.WorkoutEntity
 import com.openkayak.app.service.GpsPoint
 import com.openkayak.app.service.LocationService
+import com.openkayak.app.service.MapTileDownloader
 import com.openkayak.app.service.WorkoutState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,9 +102,10 @@ import org.osmdroid.views.overlay.Polyline
 
 class MainActivity : ComponentActivity() {
 
-    private var locationService: LocationService? = null
+    private val locationServiceState = mutableStateOf<LocationService?>(null)
     private var isBound = false
     private lateinit var hrManager: HeartRateManager
+    private lateinit var mapDownloader: MapTileDownloader
 
     private val isAmbientMode = mutableStateOf(false)
 
@@ -124,12 +126,12 @@ class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as LocationService.LocalBinder
-            locationService = binder.getService()
+            locationServiceState.value = binder.getService()
             isBound = true
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            locationService = null
+            locationServiceState.value = null
             isBound = false
         }
     }
@@ -141,14 +143,17 @@ class MainActivity : ComponentActivity() {
         Configuration.getInstance().load(this, getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
 
         hrManager = HeartRateManager(this)
+        mapDownloader = MapTileDownloader(this)
 
         val intent = Intent(this, LocationService::class.java)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         setContent {
+            val activeService = locationServiceState.value
             OpenKayakApp(
-                locationService = locationService,
+                locationService = activeService,
                 hrManager = hrManager,
+                mapDownloader = mapDownloader,
                 isAmbient = isAmbientMode.value,
                 onStartWorkout = {
                     val startIntent = Intent(this, LocationService::class.java).apply {
@@ -173,7 +178,7 @@ class MainActivity : ComponentActivity() {
                     startService(resumeIntent)
                 },
                 onStopWorkout = { workoutState, hrBpm ->
-                    val points = workoutState.locationList
+                    val points = activeService?.getTrackPoints() ?: emptyList()
                     val jsonRoute = pointsToJson(points)
                     val avgSpeed = if (workoutState.elapsedTimeSeconds > 0) {
                         (workoutState.distanceMeters / workoutState.elapsedTimeSeconds) * 3.6f
@@ -239,6 +244,7 @@ class MainActivity : ComponentActivity() {
 fun OpenKayakApp(
     locationService: LocationService?,
     hrManager: HeartRateManager,
+    mapDownloader: MapTileDownloader,
     isAmbient: Boolean,
     onStartWorkout: () -> Unit,
     onPauseWorkout: () -> Unit,
@@ -279,8 +285,32 @@ fun OpenKayakApp(
 
     val workoutState by (locationService?.workoutState ?: MutableStateFlow(WorkoutState())).collectAsState()
     val hrState by hrManager.hrState.collectAsState()
+    val downloadState by mapDownloader.downloadState.collectAsState()
 
-    val pagerState = rememberPagerState(pageCount = { 4 })
+    var isWaterTouchLocked by remember { mutableStateOf(false) }
+    var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
+
+    LaunchedEffect(workoutState.isTracking) {
+        if (workoutState.isTracking) {
+            isWaterTouchLocked = true
+            unlockTimeRemainingSeconds = 0
+        } else {
+            isWaterTouchLocked = false
+            unlockTimeRemainingSeconds = 0
+        }
+    }
+
+    LaunchedEffect(unlockTimeRemainingSeconds) {
+        if (unlockTimeRemainingSeconds > 0) {
+            delay(1000L)
+            unlockTimeRemainingSeconds -= 1
+            if (unlockTimeRemainingSeconds == 0 && workoutState.isTracking) {
+                isWaterTouchLocked = true
+            }
+        }
+    }
+
+    val pagerState = rememberPagerState(initialPage = 0) { 4 }
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
 
@@ -310,14 +340,16 @@ fun OpenKayakApp(
                         .focusRequester(focusRequester)
                         .focusable()
                         .onRotaryScrollEvent { event ->
-                            coroutineScope.launch {
-                                if (event.verticalScrollPixels > 0) {
-                                    if (pagerState.currentPage < 3) {
-                                        pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                    }
-                                } else if (event.verticalScrollPixels < 0) {
-                                    if (pagerState.currentPage > 0) {
-                                        pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                            if (!isWaterTouchLocked) {
+                                coroutineScope.launch {
+                                    if (event.verticalScrollPixels > 0) {
+                                        if (pagerState.currentPage < 3) {
+                                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                        }
+                                    } else if (event.verticalScrollPixels < 0) {
+                                        if (pagerState.currentPage > 0) {
+                                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                        }
                                     }
                                 }
                             }
@@ -326,6 +358,7 @@ fun OpenKayakApp(
                 ) {
                     HorizontalPager(
                         state = pagerState,
+                        userScrollEnabled = !isWaterTouchLocked,
                         modifier = Modifier.fillMaxSize()
                     ) { page ->
                         when (page) {
@@ -337,9 +370,14 @@ fun OpenKayakApp(
                                 onResumeWorkout = onResumeWorkout,
                                 onStopWorkout = { onStopWorkout(workoutState, hrState.heartRateBpm) }
                             )
-                            1 -> MapScreen(workoutState = workoutState)
+                            1 -> MapScreen(workoutState = workoutState, locationService = locationService)
                             2 -> HistoryScreen()
-                            3 -> SettingsScreen(hrManager = hrManager, hrState = hrState)
+                            3 -> SettingsScreen(
+                                hrManager = hrManager,
+                                hrState = hrState,
+                                mapDownloader = mapDownloader,
+                                downloadState = downloadState
+                            )
                         }
                     }
 
@@ -351,8 +389,100 @@ fun OpenKayakApp(
                         selectedColor = Color(0xFFFFD700),
                         unselectedColor = Color.Gray
                     )
+
+                    if (isWaterTouchLocked && workoutState.isTracking) {
+                        WaterTouchLockOverlay(
+                            onUnlock3SecComplete = {
+                                isWaterTouchLocked = false
+                                unlockTimeRemainingSeconds = 60
+                            }
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun WaterTouchLockOverlay(
+    onUnlock3SecComplete: () -> Unit
+) {
+    var holdProgress by remember { mutableStateOf(0f) }
+    var isHolding by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isHolding) {
+        if (isHolding) {
+            val startTime = System.currentTimeMillis()
+            while (isHolding) {
+                val elapsed = System.currentTimeMillis() - startTime
+                holdProgress = (elapsed / 3000f).coerceAtMost(1f)
+                if (holdProgress >= 1f) {
+                    onUnlock3SecComplete()
+                    break
+                }
+                delay(30L)
+            }
+        } else {
+            holdProgress = 0f
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xBB000000)),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        AndroidView(
+            factory = { context ->
+                android.view.View(context).apply {
+                    setOnTouchListener { _, event ->
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                isHolding = true
+                                true
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                isHolding = false
+                                true
+                            }
+                            else -> true
+                        }
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (holdProgress > 0f) {
+                CircularProgressIndicator(
+                    progress = holdProgress,
+                    modifier = Modifier.size(36.dp),
+                    indicatorColor = Color.Yellow,
+                    trackColor = Color.DarkGray,
+                    strokeWidth = 3.dp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            Text(
+                text = if (isHolding) "DESBLOQUEANDO (3s)..." else "Pulsa 3 segundos para desbloquear",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isHolding) Color.Yellow else Color.Cyan,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xEE111111))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
         }
     }
 }
@@ -383,7 +513,6 @@ fun DashboardScreen(
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Row 1: Speed & Heart Rate
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -391,7 +520,6 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quadrant 1: Speed (km/h)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -423,7 +551,6 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Quadrant 2: Heart Rate (BPM)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -466,7 +593,6 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(3.dp))
 
-            // Row 2: Stroke Cadence (Paladas / SPM) & Distance/Time
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -474,7 +600,6 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Quadrant 3: Stroke Cadence (Paladas / SPM)
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -506,7 +631,6 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Quadrant 4: Distance & Timer
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -534,7 +658,6 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Controls
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center,
@@ -675,7 +798,12 @@ fun TwoSecondLongPressButton(
 }
 
 @Composable
-fun MapScreen(workoutState: WorkoutState) {
+fun MapScreen(
+    workoutState: WorkoutState,
+    locationService: LocationService?
+) {
+    val trackPoints = locationService?.getTrackPoints() ?: emptyList()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -687,17 +815,26 @@ fun MapScreen(workoutState: WorkoutState) {
                     setTileSource(TileSourceFactory.MAPNIK)
                     setMultiTouchControls(true)
                     controller.setZoom(16.0)
-                    if (workoutState.locationList.isNotEmpty()) {
-                        val last = workoutState.locationList.last()
+
+                    setOnTouchListener { v, event ->
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> v.parent.requestDisallowInterceptTouchEvent(true)
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.parent.requestDisallowInterceptTouchEvent(false)
+                        }
+                        false
+                    }
+
+                    if (trackPoints.isNotEmpty()) {
+                        val last = trackPoints.last()
                         controller.setCenter(GeoPoint(last.latitude, last.longitude))
                     } else {
-                        controller.setCenter(GeoPoint(40.416775, -3.703790))
+                        controller.setCenter(GeoPoint(43.3614, -5.8593)) // Asturias / Oviedo default center
                     }
                 }
             },
             update = { mapView ->
                 mapView.overlays.clear()
-                val points = workoutState.locationList.map { GeoPoint(it.latitude, it.longitude) }
+                val points = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
                 if (points.isNotEmpty()) {
                     val polyline = Polyline().apply {
                         setPoints(points)
@@ -734,7 +871,7 @@ fun MapScreen(workoutState: WorkoutState) {
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             Text(
-                text = "GPS: ${workoutState.locationList.size} pts | ${String.format("%.2f", workoutState.distanceMeters / 1000f)} km",
+                text = "GPS: ${trackPoints.size} pts | ${String.format("%.2f", workoutState.distanceMeters / 1000f)} km",
                 fontSize = 11.sp,
                 color = Color.Yellow,
                 fontWeight = FontWeight.Bold
@@ -840,7 +977,9 @@ fun HistoryScreen() {
 @Composable
 fun SettingsScreen(
     hrManager: HeartRateManager,
-    hrState: com.openkayak.app.ble.BleHeartRateState
+    hrState: com.openkayak.app.ble.BleHeartRateState,
+    mapDownloader: MapTileDownloader,
+    downloadState: com.openkayak.app.service.DownloadState
 ) {
     val listState = rememberScalingLazyListState()
 
@@ -941,6 +1080,62 @@ fun SettingsScreen(
                                     .height(28.dp)
                             ) {
                                 Text("Olvidar Sensor Preferido", fontSize = 9.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Offline Map Download Section (Asturias via Bluetooth)
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    onClick = {},
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Mapa Offline Asturias",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Yellow
+                        )
+                        Text(
+                            text = "Descarga solo con Bluetooth",
+                            fontSize = 9.sp,
+                            color = Color.Gray
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = downloadState.statusMessage,
+                            fontSize = 10.sp,
+                            color = if (downloadState.isDownloading) Color.Cyan else Color.White,
+                            textAlign = TextAlign.Center
+                        )
+
+                        if (downloadState.isDownloading) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            CircularProgressIndicator(
+                                progress = downloadState.progressPercent / 100f,
+                                modifier = Modifier.size(24.dp),
+                                indicatorColor = Color.Yellow,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Button(
+                                onClick = { mapDownloader.downloadAsturiasOfflineMap() },
+                                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF00E676)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(32.dp)
+                            ) {
+                                Text("Descargar Asturias (BT)", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
