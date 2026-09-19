@@ -107,15 +107,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var hrManager: HeartRateManager
     private lateinit var mapDownloader: MapTileDownloader
 
-    private val isAmbientMode = mutableStateOf(false)
+    private val isSystemAmbientMode = mutableStateOf(false)
 
     private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {
         override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
-            isAmbientMode.value = true
+            isSystemAmbientMode.value = true
         }
 
         override fun onExitAmbient() {
-            isAmbientMode.value = false
+            isSystemAmbientMode.value = false
         }
 
         override fun onUpdateAmbient() {}
@@ -154,7 +154,7 @@ class MainActivity : ComponentActivity() {
                 locationService = activeService,
                 hrManager = hrManager,
                 mapDownloader = mapDownloader,
-                isAmbient = isAmbientMode.value,
+                isSystemAmbient = isSystemAmbientMode.value,
                 onStartWorkout = {
                     val startIntent = Intent(this, LocationService::class.java).apply {
                         action = LocationService.ACTION_START
@@ -245,7 +245,7 @@ fun OpenKayakApp(
     locationService: LocationService?,
     hrManager: HeartRateManager,
     mapDownloader: MapTileDownloader,
-    isAmbient: Boolean,
+    isSystemAmbient: Boolean,
     onStartWorkout: () -> Unit,
     onPauseWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
@@ -290,6 +290,17 @@ fun OpenKayakApp(
     var isWaterTouchLocked by remember { mutableStateOf(false) }
     var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
 
+    // 3 Minutes (180s) Inactivity Timer for AOD Activation
+    var inactivitySeconds by remember { mutableStateOf(0) }
+    val isThreeMinInactivityAmbient = inactivitySeconds >= 180
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000L)
+            inactivitySeconds += 1
+        }
+    }
+
     LaunchedEffect(workoutState.isTracking) {
         if (workoutState.isTracking) {
             isWaterTouchLocked = true
@@ -326,12 +337,18 @@ fun OpenKayakApp(
         }
     }
 
+    val isEffectiveAmbient = isSystemAmbient || isThreeMinInactivityAmbient
+
     MaterialTheme {
         Scaffold(
-            timeText = { if (!isAmbient) TimeText() }
+            timeText = { if (!isEffectiveAmbient) TimeText() }
         ) {
-            if (isAmbient) {
-                AmbientModeScreen(workoutState = workoutState, hrBpm = hrState.heartRateBpm)
+            if (isEffectiveAmbient) {
+                AmbientModeScreen(
+                    workoutState = workoutState,
+                    hrBpm = hrState.heartRateBpm,
+                    locationService = locationService
+                )
             } else {
                 Box(
                     modifier = Modifier
@@ -340,6 +357,7 @@ fun OpenKayakApp(
                         .focusRequester(focusRequester)
                         .focusable()
                         .onRotaryScrollEvent { event ->
+                            inactivitySeconds = 0 // Reset inactivity on crown turn
                             if (!isWaterTouchLocked) {
                                 coroutineScope.launch {
                                     if (event.verticalScrollPixels > 0) {
@@ -356,6 +374,18 @@ fun OpenKayakApp(
                             true
                         }
                 ) {
+                    AndroidView(
+                        factory = { ctx ->
+                            android.view.View(ctx).apply {
+                                setOnTouchListener { _, _ ->
+                                    inactivitySeconds = 0 // Reset inactivity on touch
+                                    false
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
                     HorizontalPager(
                         state = pagerState,
                         userScrollEnabled = !isWaterTouchLocked,
@@ -393,6 +423,7 @@ fun OpenKayakApp(
                     if (isWaterTouchLocked && workoutState.isTracking) {
                         WaterTouchLockOverlay(
                             onUnlock3SecComplete = {
+                                inactivitySeconds = 0
                                 isWaterTouchLocked = false
                                 unlockTimeRemainingSeconds = 60
                             }
@@ -828,7 +859,7 @@ fun MapScreen(
                         val last = trackPoints.last()
                         controller.setCenter(GeoPoint(last.latitude, last.longitude))
                     } else {
-                        controller.setCenter(GeoPoint(43.3614, -5.8593)) // Asturias / Oviedo default center
+                        controller.setCenter(GeoPoint(43.3614, -5.8593))
                     }
                 }
             },
@@ -1003,6 +1034,7 @@ fun SettingsScreen(
                 )
             }
 
+            // Element 1: Heart Rate BLE Chest Strap Card
             item {
                 Card(
                     onClick = {},
@@ -1086,7 +1118,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Offline Map Download Section (Asturias via Bluetooth)
+            // Element 2: Offline Map Download Card (Asturias via Bluetooth)
             item {
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
@@ -1142,6 +1174,7 @@ fun SettingsScreen(
                 }
             }
 
+            // Element 3: App Version Footer
             item {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -1156,57 +1189,121 @@ fun SettingsScreen(
     }
 }
 
+/**
+ * Enhanced Ambient Mode Screen (AOD Mode):
+ * 1. Top: Giant Stopwatch Time (HH:MM:SS)
+ * 2. Mid-Top: Row with KM/H (speed), PALADAS (SPM), and FC (BPM)
+ * 3. Mid-Bottom: Osmdroid Map View showing 1 km² surrounding radius with red route line and user centered
+ */
 @Composable
 fun AmbientModeScreen(
     workoutState: WorkoutState,
-    hrBpm: Int
+    hrBpm: Int,
+    locationService: LocationService?
 ) {
+    val trackPoints = locationService?.getTrackPoints() ?: emptyList()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .padding(16.dp),
+            .padding(top = 16.dp, bottom = 4.dp, start = 8.dp, end = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
+        // Top: Giant Time (HH:MM:SS)
         Text(
             text = formatTime(workoutState.elapsedTimeSeconds),
-            fontSize = 30.sp,
-            fontWeight = FontWeight.Bold,
+            fontSize = 26.sp,
+            fontWeight = FontWeight.ExtraBold,
             color = Color.White
         )
-        Spacer(modifier = Modifier.height(6.dp))
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        // Mid-Top: Speed, SPM, BPM
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceAround
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "KM/H", fontSize = 9.sp, color = Color.Gray)
+                Text(text = "KM/H", fontSize = 8.sp, color = Color.Gray)
                 Text(
                     text = String.format("%.1f", workoutState.speedKmh),
-                    fontSize = 18.sp,
+                    fontSize = 15.sp,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "PALADAS", fontSize = 9.sp, color = Color.Gray)
+                Text(text = "PALADAS", fontSize = 8.sp, color = Color.Gray)
                 Text(
                     text = "${workoutState.strokeRateSpm}",
-                    fontSize = 18.sp,
+                    fontSize = 15.sp,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "BPM", fontSize = 9.sp, color = Color.Gray)
+                Text(text = "FC", fontSize = 8.sp, color = Color.Gray)
                 Text(
                     text = if (hrBpm > 0) "$hrBpm" else "--",
-                    fontSize = 18.sp,
+                    fontSize = 15.sp,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
             }
+        }
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        // Mid-Bottom: High-Contrast Map View centered on 1 km² surrounding range with red track line
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF111111))
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    MapView(ctx).apply {
+                        setTileSource(TileSourceFactory.MAPNIK)
+                        setMultiTouchControls(false)
+                        // Zoom 16.5 corresponds to ~1 km² visible area around user
+                        controller.setZoom(16.5)
+                        if (trackPoints.isNotEmpty()) {
+                            val last = trackPoints.last()
+                            controller.setCenter(GeoPoint(last.latitude, last.longitude))
+                        } else {
+                            controller.setCenter(GeoPoint(43.3614, -5.8593))
+                        }
+                    }
+                },
+                update = { mapView ->
+                    mapView.overlays.clear()
+                    val points = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
+                    if (points.isNotEmpty()) {
+                        val polyline = Polyline().apply {
+                            setPoints(points)
+                            outlinePaint.color = android.graphics.Color.RED
+                            outlinePaint.strokeWidth = 6f
+                        }
+                        mapView.overlays.add(polyline)
+
+                        val currentMarker = Marker(mapView).apply {
+                            position = points.last()
+                            title = "Posición"
+                        }
+                        mapView.overlays.add(currentMarker)
+
+                        mapView.controller.setCenter(points.last())
+                    }
+                    mapView.invalidate()
+                },
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
