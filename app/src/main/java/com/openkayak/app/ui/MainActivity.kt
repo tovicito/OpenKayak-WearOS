@@ -173,7 +173,7 @@ class MainActivity : ComponentActivity() {
                     startService(resumeIntent)
                 },
                 onStopWorkout = { workoutState, hrBpm ->
-                    val points = workoutState.locationList
+                    val points = locationService?.getTrackPoints() ?: emptyList()
                     val jsonRoute = pointsToJson(points)
                     val avgSpeed = if (workoutState.elapsedTimeSeconds > 0) {
                         (workoutState.distanceMeters / workoutState.elapsedTimeSeconds) * 3.6f
@@ -280,6 +280,31 @@ fun OpenKayakApp(
     val workoutState by (locationService?.workoutState ?: MutableStateFlow(WorkoutState())).collectAsState()
     val hrState by hrManager.hrState.collectAsState()
 
+    // Water Touch Lock State (Locked when workout tracking is active)
+    var isWaterTouchLocked by remember { mutableStateOf(false) }
+    var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
+
+    LaunchedEffect(workoutState.isTracking) {
+        if (workoutState.isTracking) {
+            isWaterTouchLocked = true
+            unlockTimeRemainingSeconds = 0
+        } else {
+            isWaterTouchLocked = false
+            unlockTimeRemainingSeconds = 0
+        }
+    }
+
+    // 1-minute (60s) unlock countdown timer
+    LaunchedEffect(unlockTimeRemainingSeconds) {
+        if (unlockTimeRemainingSeconds > 0) {
+            delay(1000L)
+            unlockTimeRemainingSeconds -= 1
+            if (unlockTimeRemainingSeconds == 0 && workoutState.isTracking) {
+                isWaterTouchLocked = true
+            }
+        }
+    }
+
     val pagerState = rememberPagerState(pageCount = { 4 })
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
@@ -310,14 +335,16 @@ fun OpenKayakApp(
                         .focusRequester(focusRequester)
                         .focusable()
                         .onRotaryScrollEvent { event ->
-                            coroutineScope.launch {
-                                if (event.verticalScrollPixels > 0) {
-                                    if (pagerState.currentPage < 3) {
-                                        pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                    }
-                                } else if (event.verticalScrollPixels < 0) {
-                                    if (pagerState.currentPage > 0) {
-                                        pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                            if (!isWaterTouchLocked) {
+                                coroutineScope.launch {
+                                    if (event.verticalScrollPixels > 0) {
+                                        if (pagerState.currentPage < 3) {
+                                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                        }
+                                    } else if (event.verticalScrollPixels < 0) {
+                                        if (pagerState.currentPage > 0) {
+                                            pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                        }
                                     }
                                 }
                             }
@@ -326,18 +353,25 @@ fun OpenKayakApp(
                 ) {
                     HorizontalPager(
                         state = pagerState,
+                        userScrollEnabled = !isWaterTouchLocked,
                         modifier = Modifier.fillMaxSize()
                     ) { page ->
                         when (page) {
                             0 -> DashboardScreen(
                                 workoutState = workoutState,
                                 hrState = hrState,
+                                isWaterLocked = isWaterTouchLocked,
+                                unlockTimeRemainingSeconds = unlockTimeRemainingSeconds,
                                 onStartWorkout = onStartWorkout,
                                 onPauseWorkout = onPauseWorkout,
                                 onResumeWorkout = onResumeWorkout,
-                                onStopWorkout = { onStopWorkout(workoutState, hrState.heartRateBpm) }
+                                onStopWorkout = { onStopWorkout(workoutState, hrState.heartRateBpm) },
+                                onUnlockWaterTouch = {
+                                    isWaterTouchLocked = false
+                                    unlockTimeRemainingSeconds = 60
+                                }
                             )
-                            1 -> MapScreen(workoutState = workoutState)
+                            1 -> MapScreen(workoutState = workoutState, locationService = locationService)
                             2 -> HistoryScreen()
                             3 -> SettingsScreen(hrManager = hrManager, hrState = hrState)
                         }
@@ -351,8 +385,104 @@ fun OpenKayakApp(
                         selectedColor = Color(0xFFFFD700),
                         unselectedColor = Color.Gray
                     )
+
+                    // Water Lock Full-Screen Overlay when locked during active kayaking
+                    if (isWaterTouchLocked && workoutState.isTracking) {
+                        WaterTouchLockOverlay(
+                            onUnlock3SecComplete = {
+                                isWaterTouchLocked = false
+                                unlockTimeRemainingSeconds = 60
+                            }
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Water Touch Lock Overlay with 3-Second Hold Unlock for Kayak Paddling
+ */
+@Composable
+fun WaterTouchLockOverlay(
+    onUnlock3SecComplete: () -> Unit
+) {
+    var holdProgress by remember { mutableStateOf(0f) }
+    var isHolding by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isHolding) {
+        if (isHolding) {
+            val startTime = System.currentTimeMillis()
+            while (isHolding) {
+                val elapsed = System.currentTimeMillis() - startTime
+                holdProgress = (elapsed / 3000f).coerceAtMost(1f)
+                if (holdProgress >= 1f) {
+                    onUnlock3SecComplete()
+                    break
+                }
+                delay(30L)
+            }
+        } else {
+            holdProgress = 0f
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xBB000000)),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        AndroidView(
+            factory = { context ->
+                android.view.View(context).apply {
+                    setOnTouchListener { _, event ->
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                isHolding = true
+                                true
+                            }
+                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                                isHolding = false
+                                true
+                            }
+                            else -> true
+                        }
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (holdProgress > 0f) {
+                CircularProgressIndicator(
+                    progress = holdProgress,
+                    modifier = Modifier.size(36.dp),
+                    indicatorColor = Color.Yellow,
+                    trackColor = Color.DarkGray,
+                    strokeWidth = 3.dp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+
+            Text(
+                text = if (isHolding) "DESBLOQUEANDO (3s)..." else "Pulsa 3 segundos para desbloquear",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isHolding) Color.Yellow else Color.Cyan,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xEE111111))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
         }
     }
 }
@@ -361,10 +491,13 @@ fun OpenKayakApp(
 fun DashboardScreen(
     workoutState: WorkoutState,
     hrState: com.openkayak.app.ble.BleHeartRateState,
+    isWaterLocked: Boolean,
+    unlockTimeRemainingSeconds: Int,
     onStartWorkout: () -> Unit,
     onPauseWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
-    onStopWorkout: () -> Unit
+    onStopWorkout: () -> Unit,
+    onUnlockWaterTouch: () -> Unit
 ) {
     val heartPulseScale by animateFloatAsState(
         targetValue = if (hrState.isPulseActive) 1.25f else 1.0f,
@@ -675,7 +808,12 @@ fun TwoSecondLongPressButton(
 }
 
 @Composable
-fun MapScreen(workoutState: WorkoutState) {
+fun MapScreen(
+    workoutState: WorkoutState,
+    locationService: LocationService?
+) {
+    val trackPoints = locationService?.getTrackPoints() ?: emptyList()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -687,8 +825,8 @@ fun MapScreen(workoutState: WorkoutState) {
                     setTileSource(TileSourceFactory.MAPNIK)
                     setMultiTouchControls(true)
                     controller.setZoom(16.0)
-                    if (workoutState.locationList.isNotEmpty()) {
-                        val last = workoutState.locationList.last()
+                    if (trackPoints.isNotEmpty()) {
+                        val last = trackPoints.last()
                         controller.setCenter(GeoPoint(last.latitude, last.longitude))
                     } else {
                         controller.setCenter(GeoPoint(40.416775, -3.703790))
@@ -697,7 +835,7 @@ fun MapScreen(workoutState: WorkoutState) {
             },
             update = { mapView ->
                 mapView.overlays.clear()
-                val points = workoutState.locationList.map { GeoPoint(it.latitude, it.longitude) }
+                val points = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
                 if (points.isNotEmpty()) {
                     val polyline = Polyline().apply {
                         setPoints(points)
@@ -734,7 +872,7 @@ fun MapScreen(workoutState: WorkoutState) {
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             Text(
-                text = "GPS: ${workoutState.locationList.size} pts | ${String.format("%.2f", workoutState.distanceMeters / 1000f)} km",
+                text = "GPS: ${trackPoints.size} pts | ${String.format("%.2f", workoutState.distanceMeters / 1000f)} km",
                 fontSize = 11.sp,
                 color = Color.Yellow,
                 fontWeight = FontWeight.Bold
