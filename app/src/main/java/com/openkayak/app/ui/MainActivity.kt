@@ -86,6 +86,7 @@ import com.openkayak.app.data.KayakDatabase
 import com.openkayak.app.data.WorkoutEntity
 import com.openkayak.app.service.GpsPoint
 import com.openkayak.app.service.LocationService
+import com.openkayak.app.service.MapTileDownloader
 import com.openkayak.app.service.WorkoutState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,10 +102,10 @@ import org.osmdroid.views.overlay.Polyline
 
 class MainActivity : ComponentActivity() {
 
-    // Reactive Compose state for async service binding
     private val locationServiceState = mutableStateOf<LocationService?>(null)
     private var isBound = false
     private lateinit var hrManager: HeartRateManager
+    private lateinit var mapDownloader: MapTileDownloader
 
     private val isAmbientMode = mutableStateOf(false)
 
@@ -142,6 +143,7 @@ class MainActivity : ComponentActivity() {
         Configuration.getInstance().load(this, getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
 
         hrManager = HeartRateManager(this)
+        mapDownloader = MapTileDownloader(this)
 
         val intent = Intent(this, LocationService::class.java)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -151,6 +153,7 @@ class MainActivity : ComponentActivity() {
             OpenKayakApp(
                 locationService = activeService,
                 hrManager = hrManager,
+                mapDownloader = mapDownloader,
                 isAmbient = isAmbientMode.value,
                 onStartWorkout = {
                     val startIntent = Intent(this, LocationService::class.java).apply {
@@ -241,6 +244,7 @@ class MainActivity : ComponentActivity() {
 fun OpenKayakApp(
     locationService: LocationService?,
     hrManager: HeartRateManager,
+    mapDownloader: MapTileDownloader,
     isAmbient: Boolean,
     onStartWorkout: () -> Unit,
     onPauseWorkout: () -> Unit,
@@ -281,6 +285,7 @@ fun OpenKayakApp(
 
     val workoutState by (locationService?.workoutState ?: MutableStateFlow(WorkoutState())).collectAsState()
     val hrState by hrManager.hrState.collectAsState()
+    val downloadState by mapDownloader.downloadState.collectAsState()
 
     var isWaterTouchLocked by remember { mutableStateOf(false) }
     var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
@@ -305,7 +310,6 @@ fun OpenKayakApp(
         }
     }
 
-    // Standard PagerState initializer with pageCount lambda
     val pagerState = rememberPagerState(initialPage = 0) { 4 }
     val coroutineScope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
@@ -368,7 +372,12 @@ fun OpenKayakApp(
                             )
                             1 -> MapScreen(workoutState = workoutState, locationService = locationService)
                             2 -> HistoryScreen()
-                            3 -> SettingsScreen(hrManager = hrManager, hrState = hrState)
+                            3 -> SettingsScreen(
+                                hrManager = hrManager,
+                                hrState = hrState,
+                                mapDownloader = mapDownloader,
+                                downloadState = downloadState
+                            )
                         }
                     }
 
@@ -807,7 +816,6 @@ fun MapScreen(
                     setMultiTouchControls(true)
                     controller.setZoom(16.0)
 
-                    // Allow horizontal page swiping when touch is near edges
                     setOnTouchListener { v, event ->
                         when (event.action) {
                             MotionEvent.ACTION_DOWN -> v.parent.requestDisallowInterceptTouchEvent(true)
@@ -820,7 +828,7 @@ fun MapScreen(
                         val last = trackPoints.last()
                         controller.setCenter(GeoPoint(last.latitude, last.longitude))
                     } else {
-                        controller.setCenter(GeoPoint(40.416775, -3.703790))
+                        controller.setCenter(GeoPoint(43.3614, -5.8593)) // Asturias / Oviedo default center
                     }
                 }
             },
@@ -969,7 +977,9 @@ fun HistoryScreen() {
 @Composable
 fun SettingsScreen(
     hrManager: HeartRateManager,
-    hrState: com.openkayak.app.ble.BleHeartRateState
+    hrState: com.openkayak.app.ble.BleHeartRateState,
+    mapDownloader: MapTileDownloader,
+    downloadState: com.openkayak.app.service.DownloadState
 ) {
     val listState = rememberScalingLazyListState()
 
@@ -1070,6 +1080,62 @@ fun SettingsScreen(
                                     .height(28.dp)
                             ) {
                                 Text("Olvidar Sensor Preferido", fontSize = 9.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Offline Map Download Section (Asturias via Bluetooth)
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    onClick = {},
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Mapa Offline Asturias",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Yellow
+                        )
+                        Text(
+                            text = "Descarga solo con Bluetooth",
+                            fontSize = 9.sp,
+                            color = Color.Gray
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = downloadState.statusMessage,
+                            fontSize = 10.sp,
+                            color = if (downloadState.isDownloading) Color.Cyan else Color.White,
+                            textAlign = TextAlign.Center
+                        )
+
+                        if (downloadState.isDownloading) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            CircularProgressIndicator(
+                                progress = downloadState.progressPercent / 100f,
+                                modifier = Modifier.size(24.dp),
+                                indicatorColor = Color.Yellow,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Button(
+                                onClick = { mapDownloader.downloadAsturiasOfflineMap() },
+                                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF00E676)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(32.dp)
+                            ) {
+                                Text("Descargar Asturias (BT)", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
