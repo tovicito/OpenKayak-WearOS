@@ -1360,47 +1360,50 @@ fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
 suspend fun getLearnedCircuitsAsync(context: Context, dbWorkouts: List<WorkoutEntity>): List<LearnedCircuit> = kotlinx.coroutines.withContext(Dispatchers.IO) {
     val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
     val customJson = prefs.getString("circuits_json", null)
+    val savedCircuits = mutableListOf<LearnedCircuit>()
+    val deletedCircuitIds = mutableSetOf<Long>()
+
     if (!customJson.isNull_or_empty()) {
         try {
-            val list = mutableListOf<LearnedCircuit>()
             val arr = org.json.JSONArray(customJson)
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
-                val polyArr = obj.optJSONArray("outerPolyline")
-                val polyList = mutableListOf<GeoPoint>()
-                if (polyArr != null) {
-                    for (j in 0 until polyArr.length()) {
-                        val pObj = polyArr.getJSONObject(j)
-                        polyList.add(GeoPoint(pObj.getDouble("lat"), pObj.getDouble("lon")))
+                val isDeleted = obj.optBoolean("isDeleted", false)
+                val id = obj.getLong("id")
+                if (isDeleted) {
+                    deletedCircuitIds.add(id)
+                } else {
+                    val polyArr = obj.optJSONArray("outerPolyline")
+                    val polyList = mutableListOf<GeoPoint>()
+                    if (polyArr != null) {
+                        for (j in 0 until polyArr.length()) {
+                            val pObj = polyArr.getJSONObject(j)
+                            polyList.add(GeoPoint(pObj.getDouble("lat"), pObj.getDouble("lon")))
+                        }
                     }
-                }
-                list.add(
-                    LearnedCircuit(
-                        id = obj.getLong("id"),
-                        name = obj.getString("name"),
-                        startLat = obj.getDouble("startLat"),
-                        startLon = obj.getDouble("startLon"),
-                        turnLat = obj.getDouble("turnLat"),
-                        turnLon = obj.getDouble("turnLon"),
-                        totalLaps = obj.getInt("totalLaps"),
-                        outerPolyline = polyList,
-                        isDeleted = obj.optBoolean("isDeleted", false)
+                    savedCircuits.add(
+                        LearnedCircuit(
+                            id = id,
+                            name = obj.getString("name"),
+                            startLat = obj.getDouble("startLat"),
+                            startLon = obj.getDouble("startLon"),
+                            turnLat = obj.getDouble("turnLat"),
+                            turnLon = obj.getDouble("turnLon"),
+                            totalLaps = obj.getInt("totalLaps"),
+                            outerPolyline = polyList,
+                            isDeleted = false
+                        )
                     )
-                )
+                }
             }
-            if (list.isNotEmpty()) return@withContext list.filter { !it.isDeleted }
         } catch (e: Exception) {}
     }
 
-    // Process raw workouts into independent circuits
-    val workoutsMap = mutableMapOf<Long, List<GpsPoint>>()
-    val rawTurns = mutableListOf<Pair<Long, GpsPoint>>() // (workoutId, turnPoint)
+    // Process raw workouts into independent circuits and real GPS trajectories
+    val parsedWorkouts = dbWorkouts.map { parseJsonRoute(it.routeGpsJson) }.filter { it.size >= 3 }
+    val rawTurns = mutableListOf<GpsPoint>()
 
-    for (w in dbWorkouts) {
-        val pts = parseJsonRoute(w.routeGpsJson)
-        if (pts.size < 3) continue
-        workoutsMap[w.id] = pts
-
+    for (pts in parsedWorkouts) {
         val sampled = mutableListOf<GpsPoint>()
         for (pt in pts) {
             if (sampled.isEmpty() || distanceBetweenMeters(sampled.last(), pt) >= 15f) {
@@ -1410,7 +1413,7 @@ suspend fun getLearnedCircuitsAsync(context: Context, dbWorkouts: List<WorkoutEn
         for (i in 1 until sampled.size - 1) {
             val angle = calculateTurnAngleDegrees(sampled[i - 1], sampled[i], sampled[i + 1])
             if (angle >= 20.0) {
-                rawTurns.add(Pair(w.id, sampled[i]))
+                rawTurns.add(sampled[i])
             }
         }
     }
@@ -1418,35 +1421,32 @@ suspend fun getLearnedCircuitsAsync(context: Context, dbWorkouts: List<WorkoutEn
     // Group turn points into spatial buoy clusters (15m radius)
     val buoyClusters = mutableListOf<MutableList<GpsPoint>>()
     for (turn in rawTurns) {
-        val pt = turn.second
         var added = false
         for (cluster in buoyClusters) {
             val avgLat = cluster.map { it.latitude }.average()
             val avgLon = cluster.map { it.longitude }.average()
             val center = GpsPoint(avgLat, avgLon, 0.0, 0L)
-            if (distanceBetweenMeters(pt, center) <= 15f) {
-                cluster.add(pt)
+            if (distanceBetweenMeters(turn, center) <= 15f) {
+                cluster.add(turn)
                 added = true
                 break
             }
         }
         if (!added) {
-            buoyClusters.add(mutableListOf(pt))
+            buoyClusters.add(mutableListOf(turn))
         }
     }
 
-    // Keep clusters with >= 5 occurrences
     val validBuoys = buoyClusters.filter { it.size >= 5 }.map { cluster ->
         val avgLat = cluster.map { it.latitude }.average()
         val avgLon = cluster.map { it.longitude }.average()
         GeoPoint(avgLat, avgLon)
     }
 
-    if (validBuoys.isEmpty()) return@withContext emptyList<LearnedCircuit>()
+    if (validBuoys.isEmpty()) return@withContext savedCircuits
 
-    // Partition buoys into independent circuits based on spatial connectivity (> 500m separate independent circuits)
-    val circuitsList = mutableListOf<LearnedCircuit>()
-    var circuitIdCounter = 1L
+    val generatedCircuits = mutableListOf<LearnedCircuit>()
+    var circuitIdCounter = 100L
 
     val unassignedBuoys = validBuoys.toMutableList()
     while (unassignedBuoys.isNotEmpty()) {
@@ -1473,22 +1473,50 @@ suspend fun getLearnedCircuitsAsync(context: Context, dbWorkouts: List<WorkoutEn
         }
 
         if (currentGroup.size >= 2) {
-            val polyline = currentGroup.toList() + currentGroup.first()
-            val learned = LearnedCircuit(
-                id = circuitIdCounter++,
-                name = "Circuito Asimilado ${circuitsList.size + 1} (${currentGroup.size} Boyas)",
-                startLat = currentGroup.first().latitude,
-                startLon = currentGroup.first().longitude,
-                turnLat = currentGroup.last().latitude,
-                turnLon = currentGroup.last().longitude,
-                totalLaps = 5,
-                outerPolyline = polyline
-            )
-            circuitsList.add(learned)
+            // Find actual representative GPS track between buoys across workouts
+            var bestPolyline: List<GeoPoint> = emptyList()
+            for (pts in parsedWorkouts) {
+                val matchingIndices = mutableListOf<Int>()
+                for (b in currentGroup) {
+                    val idx = pts.indexOfFirst { pt ->
+                        distanceBetweenMeters(pt, GpsPoint(b.latitude, b.longitude, 0.0, 0L)) <= 30f
+                    }
+                    if (idx != -1) matchingIndices.add(idx)
+                }
+                if (matchingIndices.size >= 2) {
+                    matchingIndices.sort()
+                    val subTrack = pts.subList(matchingIndices.first(), matchingIndices.last() + 1)
+                        .map { GeoPoint(it.latitude, it.longitude) }
+                    if (subTrack.size > bestPolyline.size) {
+                        bestPolyline = subTrack
+                    }
+                }
+            }
+
+            if (bestPolyline.isEmpty()) {
+                bestPolyline = currentGroup.toList() + currentGroup.first()
+            }
+
+            val cId = circuitIdCounter++
+            if (!deletedCircuitIds.contains(cId)) {
+                val learned = LearnedCircuit(
+                    id = cId,
+                    name = "Circuito Asimilado ${generatedCircuits.size + 1} (${currentGroup.size} Boyas)",
+                    startLat = currentGroup.first().latitude,
+                    startLon = currentGroup.first().longitude,
+                    turnLat = currentGroup.last().latitude,
+                    turnLon = currentGroup.last().longitude,
+                    totalLaps = 5,
+                    outerPolyline = bestPolyline,
+                    isDeleted = false
+                )
+                generatedCircuits.add(learned)
+            }
         }
     }
 
-    return@withContext circuitsList
+    val combined = (savedCircuits + generatedCircuits).distinctBy { it.id }
+    return@withContext combined
 }
 
 fun saveLearnedCircuits(context: Context, circuits: List<LearnedCircuit>) {
