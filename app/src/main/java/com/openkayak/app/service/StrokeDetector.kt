@@ -81,9 +81,7 @@ class StrokeDetector(context: Context) : SensorEventListener {
         val ay = event.values[1]
         val az = event.values[2]
 
-        // Performance Optimization: Use Float overload for sqrt directly to avoid
-        // converting Float -> Double -> Float on every high-frequency sensor event (20-50Hz).
-        val currentAcc = sqrt(ay * ay + az * az)
+        val currentAcc = sqrt((ay * ay + az * az).toDouble()).toFloat()
 
         val filteredAcc = previousAcceleration + 0.3f * (currentAcc - previousAcceleration)
 
