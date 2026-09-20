@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import android.os.Bundle
 import android.os.IBinder
 import android.view.MotionEvent
@@ -154,8 +155,11 @@ class MainActivity : ComponentActivity() {
         healthConnectManager = HealthConnectManager(this)
 
         val intent = Intent(this, LocationService::class.java)
-        startService(intent)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        try {
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "bindService failed: ${e.localizedMessage}")
+        }
 
         setContent {
             val activeService = locationServiceState.value
@@ -327,8 +331,12 @@ fun OpenKayakApp(
             hrManager.startMonitoring()
             if (healthConnectManager.healthConnectClient != null) {
                 coroutineScope.launch {
-                    if (!healthConnectManager.hasAllPermissions()) {
-                        healthConnectLauncher.launch(healthConnectManager.permissions)
+                    try {
+                        if (!healthConnectManager.hasAllPermissions()) {
+                            healthConnectLauncher.launch(healthConnectManager.permissions)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Health Connect permission launch exception: ${e.localizedMessage}")
                     }
                 }
             }
@@ -469,7 +477,8 @@ fun OpenKayakApp(
                                 hrManager = hrManager,
                                 hrState = hrState,
                                 mapDownloader = mapDownloader,
-                                downloadState = downloadState
+                                downloadState = downloadState,
+                                healthConnectManager = healthConnectManager
                             )
                         }
                     }
@@ -1249,56 +1258,100 @@ fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<
         } catch (e: Exception) {}
     }
 
-    // Circuit learning algorithm filtering turns with >= 25 deg change and >= 15m sampling distance
-    val totalHistoryCount = dbWorkouts.size
-    val allDetectedTurns = mutableListOf<GpsPoint>()
-
+    // Extract all turn points across workouts (sampled >= 15m, turn angle >= 20 deg)
+    val rawTurns = mutableListOf<GpsPoint>()
     for (w in dbWorkouts) {
         val pts = parseJsonRoute(w.routeGpsJson)
-        // Filter points with at least 15m spatial separation
-        val sampledPts = mutableListOf<GpsPoint>()
+        val sampled = mutableListOf<GpsPoint>()
         for (pt in pts) {
-            if (sampledPts.isEmpty() || distanceBetweenMeters(sampledPts.last(), pt) >= 15f) {
-                sampledPts.add(pt)
+            if (sampled.isEmpty() || distanceBetweenMeters(sampled.last(), pt) >= 15f) {
+                sampled.add(pt)
             }
         }
-        // Detect sharp turns (>= 25 degrees turn angle)
-        for (i in 1 until sampledPts.size - 1) {
-            val angle = calculateTurnAngleDegrees(sampledPts[i - 1], sampledPts[i], sampledPts[i + 1])
-            if (angle >= 25.0) {
-                allDetectedTurns.add(sampledPts[i])
+        for (i in 1 until sampled.size - 1) {
+            val angle = calculateTurnAngleDegrees(sampled[i - 1], sampled[i], sampled[i + 1])
+            if (angle >= 20.0) {
+                rawTurns.add(sampled[i])
             }
         }
     }
 
-    if (totalHistoryCount >= 1 || allDetectedTurns.size >= 3) {
-        val startPt = GeoPoint(43.5350, -5.9050)
-        val turnPt = if (allDetectedTurns.isNotEmpty()) {
-            GeoPoint(allDetectedTurns.map { it.latitude }.average(), allDetectedTurns.map { it.longitude }.average())
-        } else {
-            GeoPoint(43.5450, -5.8950)
+    // Cluster turn points within 15 meters of each other
+    val clusters = mutableListOf<MutableList<GpsPoint>>()
+    for (turn in rawTurns) {
+        var addedToCluster = false
+        for (cluster in clusters) {
+            val clusterAvgLat = cluster.map { it.latitude }.average()
+            val clusterAvgLon = cluster.map { it.longitude }.average()
+            val centerPoint = GpsPoint(clusterAvgLat, clusterAvgLon, 0.0, 0L)
+
+            if (distanceBetweenMeters(turn, centerPoint) <= 15f) {
+                cluster.add(turn)
+                addedToCluster = true
+                break
+            }
         }
+        if (!addedToCluster) {
+            clusters.add(mutableListOf(turn))
+        }
+    }
 
-        // Generate green outer boundary polyline enclosing the boya turn marker (with 20m outer offset)
-        val outerPath = listOf(
-            GeoPoint(startPt.latitude - 0.0003, startPt.longitude - 0.0004),
-            GeoPoint(turnPt.latitude + 0.0003, turnPt.longitude - 0.0004),
-            GeoPoint(turnPt.latitude + 0.0004, turnPt.longitude + 0.0004),
-            GeoPoint(startPt.latitude - 0.0003, startPt.longitude + 0.0004),
-            GeoPoint(startPt.latitude - 0.0003, startPt.longitude - 0.0004)
-        )
+    // Convert clusters with >= 5 occurrences into learned Boyas with exact arithmetic mean centroid
+    val learnedList = mutableListOf<LearnedCircuit>()
+    var circuitIdCounter = 1L
 
-        val learned = LearnedCircuit(
+    for (cluster in clusters) {
+        if (cluster.size >= 5) {
+            val meanLat = cluster.map { it.latitude }.average()
+            val meanLon = cluster.map { it.longitude }.average()
+
+            val startPt = GeoPoint(43.5350, -5.9050)
+            val turnPt = GeoPoint(meanLat, meanLon)
+
+            val outerPath = listOf(
+                GeoPoint(startPt.latitude - 0.0002, startPt.longitude - 0.0003),
+                GeoPoint(turnPt.latitude + 0.0002, turnPt.longitude - 0.0003),
+                GeoPoint(turnPt.latitude + 0.0003, turnPt.longitude + 0.0003),
+                GeoPoint(startPt.latitude - 0.0002, startPt.longitude + 0.0003),
+                GeoPoint(startPt.latitude - 0.0002, startPt.longitude - 0.0003)
+            )
+
+            learnedList.add(
+                LearnedCircuit(
+                    id = circuitIdCounter++,
+                    name = "Boya $circuitIdCounter (Media Centroide: ${cluster.size}x)",
+                    startLat = startPt.latitude,
+                    startLon = startPt.longitude,
+                    turnLat = meanLat,
+                    turnLon = meanLon,
+                    totalLaps = cluster.size,
+                    outerPolyline = outerPath
+                )
+            )
+        }
+    }
+
+    if (learnedList.isNotEmpty()) return learnedList
+
+    // Fallback if < 5 turns in cluster but workouts exist
+    if (dbWorkouts.isNotEmpty()) {
+        val defaultCircuit = LearnedCircuit(
             id = 1L,
-            name = "Circuito Embalse (Boya >25°)",
-            startLat = startPt.latitude,
-            startLon = startPt.longitude,
-            turnLat = turnPt.latitude,
-            turnLon = turnPt.longitude,
-            totalLaps = (totalHistoryCount * 3).coerceAtLeast(5),
-            outerPolyline = outerPath
+            name = "Boya Embalse Trasona (Base)",
+            startLat = 43.5350,
+            startLon = -5.9050,
+            turnLat = 43.5450,
+            turnLon = -5.8950,
+            totalLaps = 5,
+            outerPolyline = listOf(
+                GeoPoint(43.5348, -5.9053),
+                GeoPoint(43.5452, -5.8953),
+                GeoPoint(43.5453, -5.8947),
+                GeoPoint(43.5348, -5.9047),
+                GeoPoint(43.5348, -5.9053)
+            )
         )
-        return listOf(learned)
+        return listOf(defaultCircuit)
     }
     return emptyList()
 }
@@ -1475,7 +1528,8 @@ fun SettingsScreen(
     hrManager: HeartRateManager,
     hrState: com.openkayak.app.ble.BleHeartRateState,
     mapDownloader: MapTileDownloader,
-    downloadState: com.openkayak.app.service.DownloadState
+    downloadState: com.openkayak.app.service.DownloadState,
+    healthConnectManager: HealthConnectManager
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
