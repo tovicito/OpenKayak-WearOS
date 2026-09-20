@@ -14,6 +14,10 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
@@ -41,10 +45,16 @@ data class BleHeartRateState(
     val deviceName: String? = null,
     val deviceAddress: String? = null,
     val preferredDeviceAddress: String? = null,
-    val isPulseActive: Boolean = false
+    val isPulseActive: Boolean = false,
+    val isUsingInternalSensor: Boolean = false
 )
 
-class HeartRateManager(private val context: Context) {
+class HeartRateManager(private val context: Context) : SensorEventListener {
+
+    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+    private val watchHrSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_HEART_RATE)
+    private var isWatchHrActive = false
+    private var autoScan10sJob: Job? = null
 
     private val prefs = context.getSharedPreferences("ble_prefs", Context.MODE_PRIVATE)
 
@@ -210,6 +220,80 @@ class HeartRateManager(private val context: Context) {
         }
     }
 
+    fun startMonitoring() {
+        startWatchHrSensor()
+        start10sAutoReconnectLoop()
+    }
+
+    private fun startWatchHrSensor() {
+        if (!isWatchHrActive && watchHrSensor != null) {
+            isWatchHrActive = sensorManager?.registerListener(this, watchHrSensor, SensorManager.SENSOR_DELAY_NORMAL) ?: false
+            if (isWatchHrActive) {
+                _hrState.update { it.copy(isUsingInternalSensor = true) }
+            }
+        }
+    }
+
+    private fun stopWatchHrSensor() {
+        if (isWatchHrActive) {
+            sensorManager?.unregisterListener(this)
+            isWatchHrActive = false
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+        if (event.sensor.type == Sensor.TYPE_HEART_RATE) {
+            val bpm = event.values.getOrNull(0)?.toInt() ?: 0
+            if (bpm > 0 && _hrState.value.connectionState != BleConnectionState.CONNECTED) {
+                _hrState.update {
+                    it.copy(
+                        heartRateBpm = bpm,
+                        isPulseActive = true,
+                        isUsingInternalSensor = true,
+                        deviceName = "Reloj (Integrado)"
+                    )
+                }
+                scope.launch {
+                    delay(150L)
+                    _hrState.update { it.copy(isPulseActive = false) }
+                }
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    fun connectLastDevice() {
+        val preferred = _hrState.value.preferredDeviceAddress ?: targetDeviceAddress
+        if (preferred != null) {
+            val device = try { bluetoothAdapter?.getRemoteDevice(preferred) } catch (e: Exception) { null }
+            if (device != null) {
+                connectToDevice(device)
+            } else {
+                startScanAndConnect()
+            }
+        } else {
+            startScanAndConnect()
+        }
+    }
+
+    private fun start10sAutoReconnectLoop() {
+        autoScan10sJob?.cancel()
+        autoScan10sJob = scope.launch {
+            while (true) {
+                delay(10000L)
+                if (_hrState.value.connectionState == BleConnectionState.DISCONNECTED) {
+                    val preferred = _hrState.value.preferredDeviceAddress ?: targetDeviceAddress
+                    if (preferred != null) {
+                        Log.d(TAG, "10s Auto-retry connecting to last BLE device: $preferred")
+                        connectLastDevice()
+                    }
+                }
+            }
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun startScanAndConnect() {
         val adapter = bluetoothAdapter
@@ -248,10 +332,9 @@ class HeartRateManager(private val context: Context) {
         }
 
         scope.launch {
-            delay(20000L)
+            delay(15000L)
             if (_hrState.value.connectionState == BleConnectionState.SCANNING) {
                 stopScan()
-                _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
             }
         }
     }

@@ -53,7 +53,8 @@ data class WorkoutState(
     val distanceMeters: Float = 0.0f,
     val elapsedTimeSeconds: Long = 0L,
     val strokeRateSpm: Int = 0,
-    val totalStrokes: Int = 0
+    val totalStrokes: Int = 0,
+    val lapCount: Int = 0
 )
 
 class LocationService : Service() {
@@ -73,6 +74,10 @@ class LocationService : Service() {
 
     private val speedWindow = ArrayDeque<Float>(5)
     private var lastLocation: Location? = null
+
+    private var lapOriginPoint: Location? = null
+    private var lastLapTimestamp: Long = 0L
+    private var isLapArmed: Boolean = false
 
     private var toneGenerator: ToneGenerator? = null
 
@@ -210,6 +215,9 @@ class LocationService : Service() {
         synchronized(locationHistory) { locationHistory.clear() }
         speedWindow.clear()
         lastLocation = null
+        lapOriginPoint = null
+        lastLapTimestamp = 0L
+        isLapArmed = false
 
         _workoutState.update { current ->
             WorkoutState(
@@ -221,7 +229,8 @@ class LocationService : Service() {
                 distanceMeters = 0.0f,
                 elapsedTimeSeconds = 0L,
                 strokeRateSpm = 0,
-                totalStrokes = 0
+                totalStrokes = 0,
+                lapCount = 0
             )
         }
 
@@ -332,6 +341,23 @@ class LocationService : Service() {
         }
 
         strokeDetector?.currentSpeedKmh = smoothedSpeedKmh
+
+        // Automatic Lap Detection Logic
+        if (lapOriginPoint == null) {
+            lapOriginPoint = location
+        } else {
+            val distToOrigin = location.distanceTo(lapOriginPoint!!)
+            val now = System.currentTimeMillis()
+
+            if (!isLapArmed && distToOrigin > 60f) {
+                isLapArmed = true
+            } else if (isLapArmed && distToOrigin <= 25f && (now - lastLapTimestamp) > 40000L) {
+                lastLapTimestamp = now
+                isLapArmed = false
+                playBeepStart()
+                _workoutState.update { it.copy(lapCount = it.lapCount + 1) }
+            }
+        }
 
         _workoutState.update { current ->
             val newDist = current.distanceMeters + addedDistance

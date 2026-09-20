@@ -35,7 +35,7 @@ class MapTileDownloader(private val context: Context) {
     private val _downloadState = MutableStateFlow(DownloadState())
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
 
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
+    private val scope = CoroutineScope(Dispatchers.Main + Job())
 
     private val asturiasBoundingBox = BoundingBox(
         43.60, // Norte
@@ -96,7 +96,7 @@ class MapTileDownloader(private val context: Context) {
                 // Ensure Osmdroid configuration user agent is set properly
                 Configuration.getInstance().userAgentValue = context.packageName
 
-                val (cacheManager, tilesAsturias, tilesTrasona) = kotlinx.coroutines.withContext(Dispatchers.Main) {
+                val (cacheManager, tilesAsturias, tilesTrasona) = run {
                     val mapView = MapView(context).apply {
                         setTileSource(TileSourceFactory.MAPNIK)
                     }

@@ -3,6 +3,7 @@ package com.openkayak.app.data
 import android.content.Context
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.units.Length
@@ -11,10 +12,21 @@ import java.time.ZoneOffset
 
 class HealthConnectManager(private val context: Context) {
 
-    private val healthConnectClient by lazy {
+    val healthConnectClient by lazy {
         if (HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE) {
             HealthConnectClient.getOrCreate(context)
         } else null
+    }
+
+    val permissions = setOf(
+        HealthPermission.getWritePermission(ExerciseSessionRecord::class),
+        HealthPermission.getWritePermission(DistanceRecord::class)
+    )
+
+    suspend fun hasAllPermissions(): Boolean {
+        val client = healthConnectClient ?: return false
+        val granted = client.permissionController.getGrantedPermissions()
+        return granted.containsAll(permissions)
     }
 
     suspend fun writeKayakWorkout(

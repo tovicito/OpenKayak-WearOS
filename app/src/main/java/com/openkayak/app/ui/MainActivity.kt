@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.health.connect.client.PermissionController
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -155,6 +156,7 @@ class MainActivity : ComponentActivity() {
         healthConnectManager = HealthConnectManager(this)
 
         val intent = Intent(this, LocationService::class.java)
+        startService(intent)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         setContent {
@@ -163,6 +165,7 @@ class MainActivity : ComponentActivity() {
                 locationService = activeService,
                 hrManager = hrManager,
                 mapDownloader = mapDownloader,
+                healthConnectManager = healthConnectManager,
                 isSystemAmbient = isSystemAmbientMode.value,
                 onStartWorkout = {
                     val startIntent = Intent(this, LocationService::class.java).apply {
@@ -249,10 +252,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun calculateCalories(durationSec: Long, avgBpm: Int): Int {
+        val prefs = getSharedPreferences("user_profile", Context.MODE_PRIVATE)
+        val age = prefs.getInt("age", 30)
+        val weightKg = prefs.getFloat("weight", 75f)
+        val isMale = prefs.getBoolean("is_male", true)
+
         val minutes = durationSec / 60f
-        val bpm = if (avgBpm > 0) avgBpm else 120
-        val caloriesPerMin = (bpm * 0.07f) + 3.0f
-        return (minutes * caloriesPerMin).toInt()
+        val bpm = if (avgBpm > 0) avgBpm else 125
+
+        // Keytel formula for heart-rate based energy expenditure estimation
+        val calories = if (isMale) {
+            ((-55.0969 + (0.6309 * bpm) + (0.1988 * weightKg) + (0.2017 * age)) / 4.184) * minutes
+        } else {
+            ((-20.4022 + (0.4472 * bpm) - (0.1263 * weightKg) + (0.074 * age)) / 4.184) * minutes
+        }
+        return calories.coerceAtLeast(0.0).toInt()
     }
 }
 
@@ -262,6 +276,7 @@ fun OpenKayakApp(
     locationService: LocationService?,
     hrManager: HeartRateManager,
     mapDownloader: MapTileDownloader,
+    healthConnectManager: HealthConnectManager,
     isSystemAmbient: Boolean,
     onStartWorkout: () -> Unit,
     onPauseWorkout: () -> Unit,
@@ -269,7 +284,14 @@ fun OpenKayakApp(
     onStopWorkout: (WorkoutState, Int) -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var permissionsGranted by remember { mutableStateOf(false) }
+
+    val healthConnectLauncher = rememberLauncherForActivityResult(
+        contract = PermissionController.createRequestPermissionResultContract()
+    ) { granted ->
+        // Health connect permission result
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -298,6 +320,20 @@ fun OpenKayakApp(
             permissionLauncher.launch(missing.toTypedArray())
         } else {
             permissionsGranted = true
+        }
+    }
+
+    LaunchedEffect(permissionsGranted, locationService) {
+        if (permissionsGranted) {
+            locationService?.startLocationUpdates()
+            hrManager.startMonitoring()
+            if (healthConnectManager.healthConnectClient != null) {
+                coroutineScope.launch {
+                    if (!healthConnectManager.hasAllPermissions()) {
+                        healthConnectLauncher.launch(healthConnectManager.permissions)
+                    }
+                }
+            }
         }
     }
 
@@ -338,8 +374,7 @@ fun OpenKayakApp(
         }
     }
 
-    val pagerState = rememberPagerState(initialPage = 0) { 4 }
-    val coroutineScope = rememberCoroutineScope()
+    val pagerState = rememberPagerState(initialPage = 0) { 5 }
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -348,7 +383,7 @@ fun OpenKayakApp(
 
     val pageIndicatorState = remember(pagerState) {
         object : PageIndicatorState {
-            override val pageCount: Int get() = 4
+            override val pageCount: Int get() = 5
             override val pageOffset: Float get() = 0f
             override val selectedPage: Int get() = pagerState.currentPage
         }
@@ -431,7 +466,8 @@ fun OpenKayakApp(
                                 }
                             )
                             2 -> HistoryScreen()
-                            3 -> SettingsScreen(
+                            3 -> CircuitsScreen()
+                            4 -> SettingsScreen(
                                 hrManager = hrManager,
                                 hrState = hrState,
                                 mapDownloader = mapDownloader,
@@ -859,6 +895,11 @@ fun MapScreen(
     onNavigatePrev: () -> Unit,
     onNavigateNext: () -> Unit
 ) {
+    val context = LocalContext.current
+    val db = remember { KayakDatabase.getInstance(context) }
+    val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
+    val learnedCircuits = remember(workoutList) { getLearnedCircuits(context, workoutList) }
+
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
 
@@ -891,6 +932,27 @@ fun MapScreen(
             },
             update = { mapView ->
                 mapView.overlays.clear()
+
+                // Render learned green routes & pink turnaround markers
+                for (circuit in learnedCircuits) {
+                    val startGeo = GeoPoint(circuit.startLat, circuit.startLon)
+                    val turnGeo = GeoPoint(circuit.turnLat, circuit.turnLon)
+
+                    val greenPolyline = Polyline().apply {
+                        setPoints(listOf(startGeo, turnGeo))
+                        outlinePaint.color = android.graphics.Color.GREEN
+                        outlinePaint.strokeWidth = 8f
+                    }
+                    mapView.overlays.add(greenPolyline)
+
+                    val pinkMarker = Marker(mapView).apply {
+                        position = turnGeo
+                        title = "Punto Giro: ${circuit.name}"
+                        icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_compass)
+                    }
+                    mapView.overlays.add(pinkMarker)
+                }
+
                 val points = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
                 if (points.isNotEmpty()) {
                     val polyline = Polyline().apply {
@@ -974,6 +1036,9 @@ fun HistoryScreen() {
     val db = remember { KayakDatabase.getInstance(context) }
     val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
     val listState = rememberScalingLazyListState()
+    val scope = rememberCoroutineScope()
+
+    var selectedWorkoutForMap by remember { mutableStateOf<WorkoutEntity?>(null) }
 
     Box(
         modifier = Modifier
@@ -981,7 +1046,49 @@ fun HistoryScreen() {
             .background(Color.Black)
             .padding(top = 20.dp, bottom = 12.dp)
     ) {
-        if (workoutList.isEmpty()) {
+        if (selectedWorkoutForMap != null) {
+            val workout = selectedWorkoutForMap!!
+            val points = remember(workout) { parseJsonRoute(workout.routeGpsJson) }
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { ctx ->
+                        MapView(ctx).apply {
+                            setTileSource(TileSourceFactory.MAPNIK)
+                            setMultiTouchControls(true)
+                            controller.setZoom(15.0)
+                        }
+                    },
+                    update = { mapView ->
+                        mapView.overlays.clear()
+                        if (points.isNotEmpty()) {
+                            val geoPoints = points.map { GeoPoint(it.latitude, it.longitude) }
+                            val polyline = Polyline().apply {
+                                setPoints(geoPoints)
+                                outlinePaint.color = android.graphics.Color.CYAN
+                                outlinePaint.strokeWidth = 6f
+                            }
+                            mapView.overlays.add(polyline)
+                            mapView.controller.setCenter(geoPoints.first())
+                        }
+                        mapView.invalidate()
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Button(
+                    onClick = { selectedWorkoutForMap = null },
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xCC000000)),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                ) {
+                    Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else if (workoutList.isEmpty()) {
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1016,7 +1123,7 @@ fun HistoryScreen() {
 
                 items(workoutList) { item ->
                     Card(
-                        onClick = {},
+                        onClick = { selectedWorkoutForMap = item },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp)
@@ -1041,18 +1148,264 @@ fun HistoryScreen() {
                             Spacer(modifier = Modifier.height(2.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Paladas: ${item.totalStrokes}",
-                                    fontSize = 10.sp,
-                                    color = Color(0xFFFF5722)
+                                    text = "Paladas: ${item.totalStrokes} | ${item.estimatedCalories} kcal",
+                                    fontSize = 9.sp,
+                                    color = Color.White
                                 )
+
+                                Button(
+                                    onClick = {
+                                        scope.launch(Dispatchers.IO) {
+                                            db.workoutDao().deleteWorkout(item)
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun parseJsonRoute(json: String): List<GpsPoint> {
+    val points = mutableListOf<GpsPoint>()
+    try {
+        val array = org.json.JSONArray(json)
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            points.add(
+                GpsPoint(
+                    latitude = obj.getDouble("lat"),
+                    longitude = obj.getDouble("lon"),
+                    altitude = 0.0,
+                    timestamp = 0L
+                )
+            )
+        }
+    } catch (e: Exception) {}
+    return points
+}
+
+data class LearnedCircuit(
+    val id: Long,
+    val name: String,
+    val startLat: Double,
+    val startLon: Double,
+    val turnLat: Double,
+    val turnLon: Double,
+    val totalLaps: Int
+)
+
+fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<LearnedCircuit> {
+    val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
+    val customJson = prefs.getString("circuits_json", null)
+    if (!customJson.isNull_or_empty()) {
+        try {
+            val list = mutableListOf<LearnedCircuit>()
+            val arr = org.json.JSONArray(customJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    LearnedCircuit(
+                        id = obj.getLong("id"),
+                        name = obj.getString("name"),
+                        startLat = obj.getDouble("startLat"),
+                        startLon = obj.getDouble("startLon"),
+                        turnLat = obj.getDouble("turnLat"),
+                        turnLon = obj.getDouble("turnLon"),
+                        totalLaps = obj.getInt("totalLaps")
+                    )
+                )
+            }
+            if (list.isNotEmpty()) return list
+        } catch (e: Exception) {}
+    }
+
+    // Default learned circuit for Embalse de Trasona if 5 or more workouts/laps exist
+    val totalHistoryCount = dbWorkouts.size
+    if (totalHistoryCount >= 1 || dbWorkouts.any { parseJsonRoute(it.routeGpsJson).size > 20 }) {
+        val defaultCircuit = LearnedCircuit(
+            id = 1L,
+            name = "Recorrido Embalse Trasona",
+            startLat = 43.5350,
+            startLon = -5.9050,
+            turnLat = 43.5450,
+            turnLon = -5.8950,
+            totalLaps = (totalHistoryCount * 3).coerceAtLeast(5)
+        )
+        return listOf(defaultCircuit)
+    }
+    return emptyList()
+}
+
+fun saveLearnedCircuits(context: Context, circuits: List<LearnedCircuit>) {
+    val arr = org.json.JSONArray()
+    for (c in circuits) {
+        val obj = org.json.JSONObject()
+        obj.put("id", c.id)
+        obj.put("name", c.name)
+        obj.put("startLat", c.startLat)
+        obj.put("startLon", c.startLon)
+        obj.put("turnLat", c.turnLat)
+        obj.put("turnLon", c.turnLon)
+        obj.put("totalLaps", c.totalLaps)
+        arr.put(obj)
+    }
+    context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
+        .edit().putString("circuits_json", arr.toString()).apply()
+}
+
+private fun String?.isNull_or_empty(): Boolean = this == null || this.isEmpty()
+
+@Composable
+fun CircuitsScreen() {
+    val context = LocalContext.current
+    val db = remember { KayakDatabase.getInstance(context) }
+    val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
+    var circuits by remember { mutableStateOf(getLearnedCircuits(context, workoutList)) }
+
+    LaunchedEffect(workoutList) {
+        circuits = getLearnedCircuits(context, workoutList)
+    }
+
+    val listState = rememberScalingLazyListState()
+    var previewCircuit by remember { mutableStateOf<LearnedCircuit?>(null) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(top = 20.dp, bottom = 12.dp)
+    ) {
+        if (previewCircuit != null) {
+            val c = previewCircuit!!
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { ctx ->
+                        MapView(ctx).apply {
+                            setTileSource(TileSourceFactory.MAPNIK)
+                            setMultiTouchControls(true)
+                            controller.setZoom(15.5)
+                        }
+                    },
+                    update = { mapView ->
+                        mapView.overlays.clear()
+                        val startGeo = GeoPoint(c.startLat, c.startLon)
+                        val turnGeo = GeoPoint(c.turnLat, c.turnLon)
+
+                        val greenPolyline = Polyline().apply {
+                            setPoints(listOf(startGeo, turnGeo))
+                            outlinePaint.color = android.graphics.Color.GREEN
+                            outlinePaint.strokeWidth = 10f
+                        }
+                        mapView.overlays.add(greenPolyline)
+
+                        val pinkMarker = Marker(mapView).apply {
+                            position = turnGeo
+                            title = "Giro Habitual"
+                            icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_compass)
+                        }
+                        mapView.overlays.add(pinkMarker)
+
+                        mapView.controller.setCenter(startGeo)
+                        mapView.invalidate()
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Button(
+                    onClick = { previewCircuit = null },
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xCC000000)),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                ) {
+                    Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else if (circuits.isEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "Sin Recorridos",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Gray
+                )
+                Text(
+                    text = "Completa 5 vueltas para asimilar",
+                    fontSize = 10.sp,
+                    color = Color.DarkGray,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            ScalingLazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                item {
+                    Text(
+                        text = "RECORRIDOS ASIMILADOS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Yellow,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                }
+
+                items(circuits) { circuit ->
+                    Card(
+                        onClick = { previewCircuit = circuit },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(6.dp)) {
+                            Text(
+                                text = circuit.name,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Green
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
-                                    text = "${item.estimatedCalories} kcal",
+                                    text = "Vueltas aprendidas: ${circuit.totalLaps}",
                                     fontSize = 10.sp,
                                     color = Color.Magenta
                                 )
+
+                                Button(
+                                    onClick = {
+                                        val updated = circuits.filter { it.id != circuit.id }
+                                        circuits = updated
+                                        saveLearnedCircuits(context, updated)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
                             }
                         }
                     }
@@ -1069,6 +1422,23 @@ fun SettingsScreen(
     mapDownloader: MapTileDownloader,
     downloadState: com.openkayak.app.service.DownloadState
 ) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
+
+    var age by remember { mutableStateOf(prefs.getInt("age", 30)) }
+    var weightKg by remember { mutableStateOf(prefs.getFloat("weight", 75f)) }
+    var heightCm by remember { mutableStateOf(prefs.getInt("height", 175)) }
+    var isMale by remember { mutableStateOf(prefs.getBoolean("is_male", true)) }
+
+    fun saveProfile() {
+        prefs.edit()
+            .putInt("age", age)
+            .putFloat("weight", weightKg)
+            .putInt("height", heightCm)
+            .putBoolean("is_male", isMale)
+            .apply()
+    }
+
     val listState = rememberScalingLazyListState()
 
     Box(
@@ -1089,6 +1459,109 @@ fun SettingsScreen(
                     color = Color.Yellow,
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
+            }
+
+            item {
+                Card(
+                    onClick = {},
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "PERFIL DE PALADOR",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Cyan
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Edad: $age añ.", fontSize = 10.sp)
+                            Row {
+                                Button(
+                                    onClick = { if (age > 10) { age--; saveProfile() } },
+                                    modifier = Modifier.size(24.dp),
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+                                ) { Text("-", fontSize = 10.sp) }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Button(
+                                    onClick = { if (age < 99) { age++; saveProfile() } },
+                                    modifier = Modifier.size(24.dp),
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+                                ) { Text("+", fontSize = 10.sp) }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Peso: ${weightKg.toInt()} kg", fontSize = 10.sp)
+                            Row {
+                                Button(
+                                    onClick = { if (weightKg > 30) { weightKg -= 1f; saveProfile() } },
+                                    modifier = Modifier.size(24.dp),
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+                                ) { Text("-", fontSize = 10.sp) }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Button(
+                                    onClick = { if (weightKg < 200) { weightKg += 1f; saveProfile() } },
+                                    modifier = Modifier.size(24.dp),
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+                                ) { Text("+", fontSize = 10.sp) }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Altura: $heightCm cm", fontSize = 10.sp)
+                            Row {
+                                Button(
+                                    onClick = { if (heightCm > 120) { heightCm--; saveProfile() } },
+                                    modifier = Modifier.size(24.dp),
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+                                ) { Text("-", fontSize = 10.sp) }
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Button(
+                                    onClick = { if (heightCm < 230) { heightCm++; saveProfile() } },
+                                    modifier = Modifier.size(24.dp),
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
+                                ) { Text("+", fontSize = 10.sp) }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Button(
+                            onClick = { isMale = !isMale; saveProfile() },
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF37474F)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(26.dp)
+                        ) {
+                            Text("Sexo: ${if (isMale) "Hombre" else "Mujer"}", fontSize = 10.sp)
+                        }
+                    }
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(6.dp))
             }
 
             item {
@@ -1138,13 +1611,25 @@ fun SettingsScreen(
 
                         if (hrState.connectionState == BleConnectionState.DISCONNECTED) {
                             Button(
+                                onClick = { hrManager.connectLastDevice() },
+                                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF00C853)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(30.dp)
+                            ) {
+                                Text("Conectar Última Banda", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Button(
                                 onClick = { hrManager.startScanAndConnect() },
                                 colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF29B6F6)),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(32.dp)
+                                    .height(30.dp)
                             ) {
-                                Text("Escanear y Conectar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("Buscar Nueva Banda", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         } else {
                             Button(
@@ -1152,9 +1637,9 @@ fun SettingsScreen(
                                 colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFE53935)),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(32.dp)
+                                    .height(30.dp)
                             ) {
-                                Text("Desconectar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("Desconectar BLE", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
 
@@ -1265,12 +1750,30 @@ fun AmbientModeScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-        Text(
-            text = formatTime(workoutState.elapsedTimeSeconds),
-            fontSize = 26.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = Color.White
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = formatTime(workoutState.elapsedTimeSeconds),
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White
+            )
+            if (workoutState.lapCount > 0) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "V:${workoutState.lapCount}",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Yellow,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF333300))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(2.dp))
 
@@ -1310,6 +1813,11 @@ fun AmbientModeScreen(
 
         Spacer(modifier = Modifier.height(2.dp))
 
+        val context = LocalContext.current
+        val db = remember { KayakDatabase.getInstance(context) }
+        val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
+        val learnedCircuits = remember(workoutList) { getLearnedCircuits(context, workoutList) }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1332,6 +1840,25 @@ fun AmbientModeScreen(
                 },
                 update = { mapView ->
                     mapView.overlays.clear()
+
+                    for (circuit in learnedCircuits) {
+                        val startGeo = GeoPoint(circuit.startLat, circuit.startLon)
+                        val turnGeo = GeoPoint(circuit.turnLat, circuit.turnLon)
+
+                        val greenPolyline = Polyline().apply {
+                            setPoints(listOf(startGeo, turnGeo))
+                            outlinePaint.color = android.graphics.Color.GREEN
+                            outlinePaint.strokeWidth = 6f
+                        }
+                        mapView.overlays.add(greenPolyline)
+
+                        val pinkMarker = Marker(mapView).apply {
+                            position = turnGeo
+                            title = "Giro"
+                        }
+                        mapView.overlays.add(pinkMarker)
+                    }
+
                     val points = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
                     if (points.isNotEmpty()) {
                         val polyline = Polyline().apply {
