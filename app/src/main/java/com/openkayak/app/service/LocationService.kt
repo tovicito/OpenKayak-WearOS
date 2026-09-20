@@ -79,6 +79,86 @@ class LocationService : Service() {
     private var lastLapTimestamp: Long = 0L
     private var isLapArmed: Boolean = false
 
+    private val realtimeTrackPoints = mutableListOf<Location>()
+    private var lastSampledLocation: Location? = null
+
+    private fun processRealtimeTurnDetection(location: Location) {
+        if (lastSampledLocation == null || lastSampledLocation!!.distanceTo(location) >= 15f) {
+            lastSampledLocation = location
+            realtimeTrackPoints.add(location)
+
+            val size = realtimeTrackPoints.size
+            if (size >= 3) {
+                val p1 = realtimeTrackPoints[size - 3]
+                val p2 = realtimeTrackPoints[size - 2]
+                val p3 = realtimeTrackPoints[size - 1]
+
+                val b1 = p1.bearingTo(p2)
+                val b2 = p2.bearingTo(p3)
+                var diff = Math.abs(b2 - b1)
+                if (diff > 180f) diff = 360f - diff
+
+                if (diff >= 20f) {
+                    saveRealtimeTurnPoint(p2, realtimeTrackPoints)
+                }
+            }
+        }
+    }
+
+    private fun saveRealtimeTurnPoint(turnLocation: Location, track: List<Location>) {
+        try {
+            val prefs = getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
+            val customJson = prefs.getString("circuits_json", null)
+            val jsonArray = if (!customJson.isNullOrEmpty()) org.json.JSONArray(customJson) else org.json.JSONArray()
+
+            val turnLat = turnLocation.latitude
+            val turnLon = turnLocation.longitude
+
+            var matchedIndex = -1
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val tLat = obj.getDouble("turnLat")
+                val tLon = obj.getDouble("turnLon")
+                val results = FloatArray(1)
+                Location.distanceBetween(turnLat, turnLon, tLat, tLon, results)
+                if (results[0] <= 15f) {
+                    matchedIndex = i
+                    break
+                }
+            }
+
+            if (matchedIndex != -1) {
+                val obj = jsonArray.getJSONObject(matchedIndex)
+                val laps = obj.getInt("totalLaps") + 1
+                obj.put("totalLaps", laps)
+                jsonArray.put(matchedIndex, obj)
+            } else {
+                val newObj = org.json.JSONObject()
+                newObj.put("id", System.currentTimeMillis())
+                newObj.put("name", "Boya Giro (${String.format("%.4f", turnLat)}, ${String.format("%.4f", turnLon)})")
+                newObj.put("startLat", track.firstOrNull()?.latitude ?: turnLat)
+                newObj.put("startLon", track.firstOrNull()?.longitude ?: turnLon)
+                newObj.put("turnLat", turnLat)
+                newObj.put("turnLon", turnLon)
+                newObj.put("totalLaps", 1)
+
+                val polyArr = org.json.JSONArray()
+                for (loc in track.takeLast(20)) {
+                    val pObj = org.json.JSONObject()
+                    pObj.put("lat", loc.latitude)
+                    pObj.put("lon", loc.longitude)
+                    polyArr.put(pObj)
+                }
+                newObj.put("outerPolyline", polyArr)
+                jsonArray.put(newObj)
+            }
+
+            prefs.edit().putString("circuits_json", jsonArray.toString()).apply()
+        } catch (e: Exception) {
+            Log.e(TAG, "saveRealtimeTurnPoint error: ${e.localizedMessage}")
+        }
+    }
+
     private var toneGenerator: ToneGenerator? = null
 
     private val _workoutState = MutableStateFlow(WorkoutState())
@@ -341,6 +421,9 @@ class LocationService : Service() {
         }
 
         strokeDetector?.currentSpeedKmh = smoothedSpeedKmh
+
+        // Real-Time Background Turn & Circuit Learning Engine
+        processRealtimeTurnDetection(location)
 
         // Automatic Lap Detection Logic
         if (lapOriginPoint == null) {

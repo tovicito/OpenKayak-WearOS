@@ -13,9 +13,14 @@ import java.time.ZoneOffset
 class HealthConnectManager(private val context: Context) {
 
     val healthConnectClient by lazy {
-        if (HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE) {
-            HealthConnectClient.getOrCreate(context)
-        } else null
+        try {
+            if (HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE) {
+                HealthConnectClient.getOrCreate(context)
+            } else null
+        } catch (e: Exception) {
+            Log.e(TAG, "Health Connect Client initialization error: ${e.localizedMessage}")
+            null
+        }
     }
 
     val permissions = setOf(
@@ -24,9 +29,14 @@ class HealthConnectManager(private val context: Context) {
     )
 
     suspend fun hasAllPermissions(): Boolean {
-        val client = healthConnectClient ?: return false
-        val granted = client.permissionController.getGrantedPermissions()
-        return granted.containsAll(permissions)
+        return try {
+            val client = healthConnectClient ?: return false
+            val granted = client.permissionController.getGrantedPermissions()
+            granted.containsAll(permissions)
+        } catch (e: Exception) {
+            Log.e(TAG, "hasAllPermissions exception: ${e.localizedMessage}")
+            false
+        }
     }
 
     suspend fun writeKayakWorkout(
