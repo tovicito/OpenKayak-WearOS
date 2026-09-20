@@ -347,6 +347,8 @@ fun OpenKayakApp(
     val hrState by hrManager.hrState.collectAsState()
     val downloadState by mapDownloader.downloadState.collectAsState()
 
+    var pendingRestoreCircuit by remember { mutableStateOf<LearnedCircuit?>(null) }
+
     var isWaterTouchLocked by remember { mutableStateOf(false) }
     var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
 
@@ -501,7 +503,133 @@ fun OpenKayakApp(
                             }
                         )
                     }
+
+                    if (pendingRestoreCircuit != null) {
+                        val circuit = pendingRestoreCircuit!!
+                        RestoreCircuitDialog(
+                            circuitName = circuit.name,
+                            onRestore = {
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
+                                    val customJson = prefs.getString("circuits_json", null)
+                                    if (!customJson.isNullOrEmpty()) {
+                                        try {
+                                            val arr = org.json.JSONArray(customJson)
+                                            for (i in 0 until arr.length()) {
+                                                val obj = arr.getJSONObject(i)
+                                                if (obj.getLong("id") == circuit.id) {
+                                                    obj.put("isDeleted", false)
+                                                    break
+                                                }
+                                            }
+                                            prefs.edit().putString("circuits_json", arr.toString()).apply()
+                                        } catch (e: Exception) {}
+                                    }
+                                }
+                                pendingRestoreCircuit = null
+                            },
+                            onKeepDeleted = {
+                                pendingRestoreCircuit = null
+                            },
+                            onPermanentDelete = {
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
+                                    val customJson = prefs.getString("circuits_json", null)
+                                    if (!customJson.isNullOrEmpty()) {
+                                        try {
+                                            val arr = org.json.JSONArray(customJson)
+                                            val newArr = org.json.JSONArray()
+                                            for (i in 0 until arr.length()) {
+                                                val obj = arr.getJSONObject(i)
+                                                if (obj.getLong("id") != circuit.id) {
+                                                    newArr.put(obj)
+                                                }
+                                            }
+                                            prefs.edit().putString("circuits_json", newArr.toString()).apply()
+                                        } catch (e: Exception) {}
+                                    }
+                                }
+                                pendingRestoreCircuit = null
+                            }
+                        )
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun RestoreCircuitDialog(
+    circuitName: String,
+    onRestore: () -> Unit,
+    onKeepDeleted: () -> Unit,
+    onPermanentDelete: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xEE000000))
+            .padding(12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "Circuito repetido:",
+                fontSize = 11.sp,
+                color = Color.LightGray
+            )
+            Text(
+                text = circuitName,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.Yellow,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "¿Desea restaurarlo?",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = onRestore,
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF00C853)),
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .height(28.dp)
+            ) {
+                Text("Sí, Restaurar", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Button(
+                onClick = onKeepDeleted,
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF37474F)),
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .height(28.dp)
+            ) {
+                Text("No (Mantener borrado)", fontSize = 10.sp, color = Color.White)
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Button(
+                onClick = onPermanentDelete,
+                colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .height(28.dp)
+            ) {
+                Text("Borrar Permanentemente", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
     }
@@ -904,7 +1032,11 @@ fun MapScreen(
     val context = LocalContext.current
     val db = remember { KayakDatabase.getInstance(context) }
     val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
-    val learnedCircuits = remember(workoutList) { getLearnedCircuits(context, workoutList) }
+    var learnedCircuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
+
+    LaunchedEffect(workoutList) {
+        learnedCircuits = getLearnedCircuitsAsync(context, workoutList)
+    }
 
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
@@ -1207,7 +1339,8 @@ data class LearnedCircuit(
     val turnLat: Double,
     val turnLon: Double,
     val totalLaps: Int,
-    val outerPolyline: List<GeoPoint> = emptyList()
+    val outerPolyline: List<GeoPoint> = emptyList(),
+    val isDeleted: Boolean = false
 )
 
 fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double {
@@ -1224,7 +1357,7 @@ fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
     return res[0]
 }
 
-fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<LearnedCircuit> {
+suspend fun getLearnedCircuitsAsync(context: Context, dbWorkouts: List<WorkoutEntity>): List<LearnedCircuit> = kotlinx.coroutines.withContext(Dispatchers.IO) {
     val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
     val customJson = prefs.getString("circuits_json", null)
     if (!customJson.isNull_or_empty()) {
@@ -1250,18 +1383,24 @@ fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<
                         turnLat = obj.getDouble("turnLat"),
                         turnLon = obj.getDouble("turnLon"),
                         totalLaps = obj.getInt("totalLaps"),
-                        outerPolyline = polyList
+                        outerPolyline = polyList,
+                        isDeleted = obj.optBoolean("isDeleted", false)
                     )
                 )
             }
-            if (list.isNotEmpty()) return list
+            if (list.isNotEmpty()) return@withContext list.filter { !it.isDeleted }
         } catch (e: Exception) {}
     }
 
-    // Extract all turn points across workouts (sampled >= 15m, turn angle >= 20 deg)
-    val rawTurns = mutableListOf<GpsPoint>()
+    // Process raw workouts into independent circuits
+    val workoutsMap = mutableMapOf<Long, List<GpsPoint>>()
+    val rawTurns = mutableListOf<Pair<Long, GpsPoint>>() // (workoutId, turnPoint)
+
     for (w in dbWorkouts) {
         val pts = parseJsonRoute(w.routeGpsJson)
+        if (pts.size < 3) continue
+        workoutsMap[w.id] = pts
+
         val sampled = mutableListOf<GpsPoint>()
         for (pt in pts) {
             if (sampled.isEmpty() || distanceBetweenMeters(sampled.last(), pt) >= 15f) {
@@ -1271,66 +1410,85 @@ fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<
         for (i in 1 until sampled.size - 1) {
             val angle = calculateTurnAngleDegrees(sampled[i - 1], sampled[i], sampled[i + 1])
             if (angle >= 20.0) {
-                rawTurns.add(sampled[i])
+                rawTurns.add(Pair(w.id, sampled[i]))
             }
         }
     }
 
-    // Cluster turn points within 15 meters of each other
-    val clusters = mutableListOf<MutableList<GpsPoint>>()
+    // Group turn points into spatial buoy clusters (15m radius)
+    val buoyClusters = mutableListOf<MutableList<GpsPoint>>()
     for (turn in rawTurns) {
-        var addedToCluster = false
-        for (cluster in clusters) {
-            val clusterAvgLat = cluster.map { it.latitude }.average()
-            val clusterAvgLon = cluster.map { it.longitude }.average()
-            val centerPoint = GpsPoint(clusterAvgLat, clusterAvgLon, 0.0, 0L)
-
-            if (distanceBetweenMeters(turn, centerPoint) <= 15f) {
-                cluster.add(turn)
-                addedToCluster = true
+        val pt = turn.second
+        var added = false
+        for (cluster in buoyClusters) {
+            val avgLat = cluster.map { it.latitude }.average()
+            val avgLon = cluster.map { it.longitude }.average()
+            val center = GpsPoint(avgLat, avgLon, 0.0, 0L)
+            if (distanceBetweenMeters(pt, center) <= 15f) {
+                cluster.add(pt)
+                added = true
                 break
             }
         }
-        if (!addedToCluster) {
-            clusters.add(mutableListOf(turn))
+        if (!added) {
+            buoyClusters.add(mutableListOf(pt))
         }
     }
 
-    // Extract mean centroid boya points for clusters with >= 5 occurrences
-    val validBoyas = mutableListOf<GeoPoint>()
-    var maxLaps = 0
+    // Keep clusters with >= 5 occurrences
+    val validBuoys = buoyClusters.filter { it.size >= 5 }.map { cluster ->
+        val avgLat = cluster.map { it.latitude }.average()
+        val avgLon = cluster.map { it.longitude }.average()
+        GeoPoint(avgLat, avgLon)
+    }
 
-    for (cluster in clusters) {
-        if (cluster.size >= 5) {
-            val meanLat = cluster.map { it.latitude }.average()
-            val meanLon = cluster.map { it.longitude }.average()
-            validBoyas.add(GeoPoint(meanLat, meanLon))
-            if (cluster.size > maxLaps) maxLaps = cluster.size
+    if (validBuoys.isEmpty()) return@withContext emptyList<LearnedCircuit>()
+
+    // Partition buoys into independent circuits based on spatial connectivity (> 500m separate independent circuits)
+    val circuitsList = mutableListOf<LearnedCircuit>()
+    var circuitIdCounter = 1L
+
+    val unassignedBuoys = validBuoys.toMutableList()
+    while (unassignedBuoys.isNotEmpty()) {
+        val currentGroup = mutableListOf<GeoPoint>()
+        currentGroup.add(unassignedBuoys.removeAt(0))
+
+        var addedMore = true
+        while (addedMore) {
+            addedMore = false
+            val iterator = unassignedBuoys.iterator()
+            while (iterator.hasNext()) {
+                val buoy = iterator.next()
+                val isConnected = currentGroup.any { g ->
+                    val p1 = GpsPoint(g.latitude, g.longitude, 0.0, 0L)
+                    val p2 = GpsPoint(buoy.latitude, buoy.longitude, 0.0, 0L)
+                    distanceBetweenMeters(p1, p2) <= 500f
+                }
+                if (isConnected) {
+                    currentGroup.add(buoy)
+                    iterator.remove()
+                    addedMore = true
+                }
+            }
+        }
+
+        if (currentGroup.size >= 2) {
+            val polyline = currentGroup.toList() + currentGroup.first()
+            val learned = LearnedCircuit(
+                id = circuitIdCounter++,
+                name = "Circuito Asimilado ${circuitsList.size + 1} (${currentGroup.size} Boyas)",
+                startLat = currentGroup.first().latitude,
+                startLon = currentGroup.first().longitude,
+                turnLat = currentGroup.last().latitude,
+                turnLon = currentGroup.last().longitude,
+                totalLaps = 5,
+                outerPolyline = polyline
+            )
+            circuitsList.add(learned)
         }
     }
 
-    if (validBoyas.isNotEmpty()) {
-        // Form a closed polygon polyline connecting all Boyas sequentially (A -> B -> C -> ... -> A)
-        val closedPolyline = mutableListOf<GeoPoint>()
-        closedPolyline.addAll(validBoyas)
-        if (validBoyas.size >= 2) {
-            closedPolyline.add(validBoyas.first())
-        }
-
-        val learned = LearnedCircuit(
-            id = 1L,
-            name = "Circuito Asimilado (${validBoyas.size} Boyas)",
-            startLat = validBoyas.first().latitude,
-            startLon = validBoyas.first().longitude,
-            turnLat = validBoyas.last().latitude,
-            turnLon = validBoyas.last().longitude,
-            totalLaps = maxLaps,
-            outerPolyline = closedPolyline
-        )
-        return listOf(learned)
-    }
-
-    return emptyList()
+    return@withContext circuitsList
 }
 
 fun saveLearnedCircuits(context: Context, circuits: List<LearnedCircuit>) {
@@ -1344,6 +1502,17 @@ fun saveLearnedCircuits(context: Context, circuits: List<LearnedCircuit>) {
         obj.put("turnLat", c.turnLat)
         obj.put("turnLon", c.turnLon)
         obj.put("totalLaps", c.totalLaps)
+        obj.put("isDeleted", c.isDeleted)
+
+        val polyArr = org.json.JSONArray()
+        for (pt in c.outerPolyline) {
+            val pObj = org.json.JSONObject()
+            pObj.put("lat", pt.latitude)
+            pObj.put("lon", pt.longitude)
+            polyArr.put(pObj)
+        }
+        obj.put("outerPolyline", polyArr)
+
         arr.put(obj)
     }
     context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
@@ -1357,10 +1526,10 @@ fun CircuitsScreen() {
     val context = LocalContext.current
     val db = remember { KayakDatabase.getInstance(context) }
     val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
-    var circuits by remember { mutableStateOf(getLearnedCircuits(context, workoutList)) }
+    var circuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
 
     LaunchedEffect(workoutList) {
-        circuits = getLearnedCircuits(context, workoutList)
+        circuits = getLearnedCircuitsAsync(context, workoutList)
     }
 
     val listState = rememberScalingLazyListState()
@@ -1902,7 +2071,11 @@ fun AmbientModeScreen(
         val context = LocalContext.current
         val db = remember { KayakDatabase.getInstance(context) }
         val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
-        val learnedCircuits = remember(workoutList) { getLearnedCircuits(context, workoutList) }
+        var learnedCircuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
+
+        LaunchedEffect(workoutList) {
+            learnedCircuits = getLearnedCircuitsAsync(context, workoutList)
+        }
 
         Box(
             modifier = Modifier
@@ -1968,6 +2141,43 @@ fun AmbientModeScreen(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // Faded edge vignette overlay for smooth blending with ambient screen background
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val edgeWidth = 18.dp.toPx()
+                // Top edge fade
+                drawRect(
+                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(Color.Black, Color.Transparent),
+                        startY = 0f,
+                        endY = edgeWidth
+                    )
+                )
+                // Bottom edge fade
+                drawRect(
+                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black),
+                        startY = size.height - edgeWidth,
+                        endY = size.height
+                    )
+                )
+                // Left edge fade
+                drawRect(
+                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        colors = listOf(Color.Black, Color.Transparent),
+                        startX = 0f,
+                        endX = edgeWidth
+                    )
+                )
+                // Right edge fade
+                drawRect(
+                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        colors = listOf(Color.Transparent, Color.Black),
+                        startX = size.width - edgeWidth,
+                        endX = size.width
+                    )
+                )
+            }
         }
         }
 

@@ -69,6 +69,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
 
     private val scope = CoroutineScope(Dispatchers.Default + Job())
     private var reconnectJob: Job? = null
+    private var lastPulseResetJob: Job? = null
 
     private val _hrState = MutableStateFlow(
         BleHeartRateState(
@@ -133,11 +134,20 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                     _hrState.update {
                         it.copy(
                             connectionState = BleConnectionState.DISCONNECTED,
-                            heartRateBpm = 0
+                            heartRateBpm = 0,
+                            hrNotificationsEnabled = false
                         )
                     }
-                    gatt?.close()
-                    bluetoothGatt = null
+                    try {
+                        gatt?.disconnect()
+                        gatt?.close()
+                    } catch (e: Exception) {}
+                    if (bluetoothGatt == gatt) {
+                        bluetoothGatt = null
+                    }
+
+                    // Fall back to internal watch HR sensor immediately when BLE disconnects
+                    startWatchHrSensor()
 
                     if (isAutoReconnectEnabled && targetDeviceAddress != null) {
                         scheduleReconnect()
@@ -233,7 +243,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             } else 0
         }
 
-        if (bpm > 0) {
+        if (bpm in 30..240) {
             stopWatchHrSensor()
             _hrState.update {
                 it.copy(
@@ -242,8 +252,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                     isUsingInternalSensor = false
                 )
             }
-            scope.launch {
-                delay(150L)
+            lastPulseResetJob?.cancel()
+            lastPulseResetJob = scope.launch {
+                delay(200L)
                 _hrState.update { it.copy(isPulseActive = false) }
             }
         }
@@ -274,7 +285,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         if (event == null) return
         if (event.sensor.type == Sensor.TYPE_HEART_RATE) {
             val bpm = event.values.getOrNull(0)?.toInt() ?: 0
-            if (bpm > 0 && _hrState.value.connectionState != BleConnectionState.CONNECTED) {
+            if (bpm in 30..240 && _hrState.value.connectionState != BleConnectionState.CONNECTED) {
                 _hrState.update {
                     it.copy(
                         heartRateBpm = bpm,
@@ -283,8 +294,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                         deviceName = "Reloj (Integrado)"
                     )
                 }
-                scope.launch {
-                    delay(150L)
+                lastPulseResetJob?.cancel()
+                lastPulseResetJob = scope.launch {
+                    delay(200L)
                     _hrState.update { it.copy(isPulseActive = false) }
                 }
             }
@@ -389,10 +401,18 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             )
         }
         try {
+            bluetoothGatt?.disconnect()
+            bluetoothGatt?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing previous GATT: ${e.localizedMessage}")
+        }
+        bluetoothGatt = null
+        try {
             bluetoothGatt = device.connectGatt(context, false, gattCallback)
         } catch (e: Exception) {
             Log.e(TAG, "connectGatt failed: ${e.localizedMessage}")
             _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
+            startWatchHrSensor()
         }
     }
 
