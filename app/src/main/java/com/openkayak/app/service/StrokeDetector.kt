@@ -111,7 +111,7 @@ class StrokeDetector(context: Context) : SensorEventListener {
         previousAcceleration = filteredAcc
     }
 
-    private fun calculateSpm(now: Long): Int {
+    internal fun calculateSpm(now: Long): Int {
         val tenSecondsAgo = now - 10_000L
         while (strokeTimestamps.isNotEmpty() && strokeTimestamps.first() < tenSecondsAgo) {
             strokeTimestamps.removeFirst()

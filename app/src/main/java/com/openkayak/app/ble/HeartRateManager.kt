@@ -180,7 +180,7 @@ class HeartRateManager(private val context: Context) {
         }
     }
 
-    private fun parseHeartRateMeasurement(data: ByteArray) {
+    internal fun parseHeartRateMeasurement(data: ByteArray) {
         if (data.isEmpty()) return
 
         val flags = data[0].toInt()
