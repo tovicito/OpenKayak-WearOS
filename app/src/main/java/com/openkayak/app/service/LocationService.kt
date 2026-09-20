@@ -271,8 +271,9 @@ class LocationService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun startLocationUpdates() {
+    fun startLocationUpdates() {
         try {
+            fusedLocationClient.removeLocationUpdates(locationCallback)
             val locationRequest = LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
                 1000L
@@ -329,6 +330,8 @@ class LocationService : Service() {
         synchronized(locationHistory) {
             locationHistory.add(gpsPoint)
         }
+
+        strokeDetector?.currentSpeedKmh = smoothedSpeedKmh
 
         _workoutState.update { current ->
             val newDist = current.distanceMeters + addedDistance

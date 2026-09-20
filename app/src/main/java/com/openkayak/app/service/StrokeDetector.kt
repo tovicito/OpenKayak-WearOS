@@ -41,9 +41,13 @@ class StrokeDetector(context: Context) : SensorEventListener {
     private var previousAcceleration = 0f
     private var isPeakArmed = true
 
-    private val UPPER_THRESHOLD = 1.8f
-    private val LOWER_THRESHOLD = 0.4f
-    private val REFRACTORY_PERIOD_MS = 380L
+    @Volatile
+    var currentSpeedKmh: Float = 0f
+
+    private val MIN_SPEED_KMH = 1.2f
+    private val UPPER_THRESHOLD = 3.2f
+    private val LOWER_THRESHOLD = 0.8f
+    private val REFRACTORY_PERIOD_MS = 450L
 
     private var lastStrokeTimestamp = 0L
     private val strokeTimestamps = ArrayDeque<Long>()
@@ -84,16 +88,19 @@ class StrokeDetector(context: Context) : SensorEventListener {
         val isLocalPeak = previousAcceleration > UPPER_THRESHOLD && filteredAcc < previousAcceleration
 
         if (isPeakArmed && isLocalPeak && (now - lastStrokeTimestamp) > REFRACTORY_PERIOD_MS) {
-            lastStrokeTimestamp = now
-            strokeTimestamps.addLast(now)
             isPeakArmed = false
+            // Ignore false stroke peaks when stationary or barely moving (e.g., handling watch or car vibrations)
+            if (currentSpeedKmh >= MIN_SPEED_KMH) {
+                lastStrokeTimestamp = now
+                strokeTimestamps.addLast(now)
 
-            val spm = calculateSpm(now)
-            _strokeState.update { current ->
-                current.copy(
-                    strokeRateSpm = spm,
-                    totalStrokes = current.totalStrokes + 1
-                )
+                val spm = calculateSpm(now)
+                _strokeState.update { current ->
+                    current.copy(
+                        strokeRateSpm = spm,
+                        totalStrokes = current.totalStrokes + 1
+                    )
+                }
             }
         } else if (!isPeakArmed && filteredAcc < LOWER_THRESHOLD) {
             isPeakArmed = true

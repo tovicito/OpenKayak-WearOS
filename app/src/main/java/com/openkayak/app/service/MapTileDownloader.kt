@@ -96,13 +96,15 @@ class MapTileDownloader(private val context: Context) {
                 // Ensure Osmdroid configuration user agent is set properly
                 Configuration.getInstance().userAgentValue = context.packageName
 
-                val mapView = MapView(context).apply {
-                    setTileSource(TileSourceFactory.MAPNIK)
+                val (cacheManager, tilesAsturias, tilesTrasona) = kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    val mapView = MapView(context).apply {
+                        setTileSource(TileSourceFactory.MAPNIK)
+                    }
+                    val cm = CacheManager(mapView)
+                    val tAst = cm.possibleTilesInArea(asturiasBoundingBox, 10, 14)
+                    val tTra = cm.possibleTilesInArea(trasonaBoundingBox, 15, 16)
+                    Triple(cm, tAst, tTra)
                 }
-                val cacheManager = CacheManager(mapView)
-
-                val tilesAsturias = cacheManager.possibleTilesInArea(asturiasBoundingBox, 10, 14)
-                val tilesTrasona = cacheManager.possibleTilesInArea(trasonaBoundingBox, 15, 16)
                 val totalCombinedTiles = tilesAsturias + tilesTrasona
 
                 _downloadState.update {
