@@ -221,12 +221,11 @@ class MapTileDownloader(private val context: Context) {
                     }
                 )
             } catch (e: Exception) {
-                // Log detailed exception internally for debugging, but expose a sanitized error message to the user
-                Log.e(TAG, "Download Exception", e)
+                Log.e(TAG, "Download Exception: ${e.localizedMessage}")
                 _downloadState.update {
                     DownloadState(
                         isDownloading = false,
-                        statusMessage = "Error en la descarga del mapa."
+                        statusMessage = "Error en descarga: ${e.localizedMessage}"
                     )
                 }
             }
