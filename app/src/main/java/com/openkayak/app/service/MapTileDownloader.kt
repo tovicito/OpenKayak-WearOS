@@ -178,7 +178,7 @@ class MapTileDownloader(private val context: Context) {
                                             it.copy(
                                                 downloadedTiles = totalDone,
                                                 progressPercent = percent.coerceIn(0, 100),
-                                                statusMessage = "Trasona Z15-Z16: $progress/$tilesTrasona ($percent%)"
+                                                statusMessage = "Trasona Z13-Z14: $progress/$tilesTrasona ($percent%)"
                                             )
                                         }
                                     }
