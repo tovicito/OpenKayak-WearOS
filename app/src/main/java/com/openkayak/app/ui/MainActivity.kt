@@ -82,6 +82,7 @@ import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import com.openkayak.app.ble.BleConnectionState
 import com.openkayak.app.ble.HeartRateManager
+import com.openkayak.app.data.HealthConnectManager
 import com.openkayak.app.data.KayakDatabase
 import com.openkayak.app.data.WorkoutEntity
 import com.openkayak.app.service.GpsPoint
@@ -106,6 +107,7 @@ class MainActivity : ComponentActivity() {
     private var isBound = false
     private lateinit var hrManager: HeartRateManager
     private lateinit var mapDownloader: MapTileDownloader
+    private lateinit var healthConnectManager: HealthConnectManager
 
     private val isSystemAmbientMode = mutableStateOf(false)
 
@@ -144,6 +146,7 @@ class MainActivity : ComponentActivity() {
 
         hrManager = HeartRateManager(this)
         mapDownloader = MapTileDownloader(this)
+        healthConnectManager = HealthConnectManager(this)
 
         val intent = Intent(this, LocationService::class.java)
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -185,8 +188,11 @@ class MainActivity : ComponentActivity() {
                     } else 0f
                     val calories = calculateCalories(workoutState.elapsedTimeSeconds, hrBpm)
 
+                    val endTime = System.currentTimeMillis()
+                    val startTime = endTime - (workoutState.elapsedTimeSeconds * 1000L)
+
                     val entity = WorkoutEntity(
-                        timestamp = System.currentTimeMillis(),
+                        timestamp = endTime,
                         durationSeconds = workoutState.elapsedTimeSeconds,
                         distanceMeters = workoutState.distanceMeters,
                         maxSpeedKmh = workoutState.maxSpeedKmh,
@@ -200,6 +206,11 @@ class MainActivity : ComponentActivity() {
                     val db = KayakDatabase.getInstance(applicationContext)
                     CoroutineScope(Dispatchers.IO).launch {
                         db.workoutDao().insertWorkout(entity)
+                        healthConnectManager.writeKayakWorkout(
+                            startTimeMillis = startTime,
+                            endTimeMillis = endTime,
+                            distanceMeters = workoutState.distanceMeters
+                        )
                     }
 
                     val stopIntent = Intent(this, LocationService::class.java).apply {
@@ -290,7 +301,6 @@ fun OpenKayakApp(
     var isWaterTouchLocked by remember { mutableStateOf(false) }
     var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
 
-    // 3 Minutes (180s) Inactivity Timer for AOD Activation
     var inactivitySeconds by remember { mutableStateOf(0) }
     val isThreeMinInactivityAmbient = inactivitySeconds >= 180
 
@@ -357,7 +367,7 @@ fun OpenKayakApp(
                         .focusRequester(focusRequester)
                         .focusable()
                         .onRotaryScrollEvent { event ->
-                            inactivitySeconds = 0 // Reset inactivity on crown turn
+                            inactivitySeconds = 0
                             if (!isWaterTouchLocked) {
                                 coroutineScope.launch {
                                     if (event.verticalScrollPixels > 0) {
@@ -378,7 +388,7 @@ fun OpenKayakApp(
                         factory = { ctx ->
                             android.view.View(ctx).apply {
                                 setOnTouchListener { _, _ ->
-                                    inactivitySeconds = 0 // Reset inactivity on touch
+                                    inactivitySeconds = 0
                                     false
                                 }
                             }
@@ -1189,12 +1199,6 @@ fun SettingsScreen(
     }
 }
 
-/**
- * Enhanced Ambient Mode Screen (AOD Mode):
- * 1. Top: Giant Stopwatch Time (HH:MM:SS)
- * 2. Mid-Top: Row with KM/H (speed), PALADAS (SPM), and FC (BPM)
- * 3. Mid-Bottom: Osmdroid Map View showing 1 km² surrounding radius with red route line and user centered
- */
 @Composable
 fun AmbientModeScreen(
     workoutState: WorkoutState,
@@ -1211,7 +1215,6 @@ fun AmbientModeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        // Top: Giant Time (HH:MM:SS)
         Text(
             text = formatTime(workoutState.elapsedTimeSeconds),
             fontSize = 26.sp,
@@ -1221,7 +1224,6 @@ fun AmbientModeScreen(
 
         Spacer(modifier = Modifier.height(2.dp))
 
-        // Mid-Top: Speed, SPM, BPM
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceAround,
@@ -1258,7 +1260,6 @@ fun AmbientModeScreen(
 
         Spacer(modifier = Modifier.height(2.dp))
 
-        // Mid-Bottom: High-Contrast Map View centered on 1 km² surrounding range with red track line
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1271,7 +1272,6 @@ fun AmbientModeScreen(
                     MapView(ctx).apply {
                         setTileSource(TileSourceFactory.MAPNIK)
                         setMultiTouchControls(false)
-                        // Zoom 16.5 corresponds to ~1 km² visible area around user
                         controller.setZoom(16.5)
                         if (trackPoints.isNotEmpty()) {
                             val last = trackPoints.last()
