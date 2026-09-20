@@ -932,11 +932,11 @@ fun MapScreen(
 
                 // Render learned green routes & pink turnaround markers
                 for (circuit in learnedCircuits) {
-                    val startGeo = GeoPoint(circuit.startLat, circuit.startLon)
                     val turnGeo = GeoPoint(circuit.turnLat, circuit.turnLon)
+                    val pathPts = if (circuit.outerPolyline.isNotEmpty()) circuit.outerPolyline else listOf(GeoPoint(circuit.startLat, circuit.startLon), turnGeo)
 
                     val greenPolyline = Polyline().apply {
-                        setPoints(listOf(startGeo, turnGeo))
+                        setPoints(pathPts)
                         outlinePaint.color = android.graphics.Color.GREEN
                         outlinePaint.strokeWidth = 8f
                     }
@@ -944,8 +944,7 @@ fun MapScreen(
 
                     val pinkMarker = Marker(mapView).apply {
                         position = turnGeo
-                        title = "Punto Giro: ${circuit.name}"
-                        icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_compass)
+                        title = "Boya Giro: ${circuit.name}"
                     }
                     mapView.overlays.add(pinkMarker)
                 }
@@ -1198,8 +1197,23 @@ data class LearnedCircuit(
     val startLon: Double,
     val turnLat: Double,
     val turnLon: Double,
-    val totalLaps: Int
+    val totalLaps: Int,
+    val outerPolyline: List<GeoPoint> = emptyList()
 )
+
+fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double {
+    val b1 = Math.toDegrees(Math.atan2(p2.longitude - p1.longitude, p2.latitude - p1.latitude))
+    val b2 = Math.toDegrees(Math.atan2(p3.longitude - p2.longitude, p3.latitude - p2.latitude))
+    var diff = Math.abs(b2 - b1)
+    if (diff > 180.0) diff = 360.0 - diff
+    return diff
+}
+
+fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
+    val res = FloatArray(1)
+    android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, res)
+    return res[0]
+}
 
 fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<LearnedCircuit> {
     val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
@@ -1210,6 +1224,14 @@ fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<
             val arr = org.json.JSONArray(customJson)
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val polyArr = obj.optJSONArray("outerPolyline")
+                val polyList = mutableListOf<GeoPoint>()
+                if (polyArr != null) {
+                    for (j in 0 until polyArr.length()) {
+                        val pObj = polyArr.getJSONObject(j)
+                        polyList.add(GeoPoint(pObj.getDouble("lat"), pObj.getDouble("lon")))
+                    }
+                }
                 list.add(
                     LearnedCircuit(
                         id = obj.getLong("id"),
@@ -1218,7 +1240,8 @@ fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<
                         startLon = obj.getDouble("startLon"),
                         turnLat = obj.getDouble("turnLat"),
                         turnLon = obj.getDouble("turnLon"),
-                        totalLaps = obj.getInt("totalLaps")
+                        totalLaps = obj.getInt("totalLaps"),
+                        outerPolyline = polyList
                     )
                 )
             }
@@ -1226,19 +1249,56 @@ fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<
         } catch (e: Exception) {}
     }
 
-    // Default learned circuit for Embalse de Trasona if 5 or more workouts/laps exist
+    // Circuit learning algorithm filtering turns with >= 25 deg change and >= 15m sampling distance
     val totalHistoryCount = dbWorkouts.size
-    if (totalHistoryCount >= 1 || dbWorkouts.any { parseJsonRoute(it.routeGpsJson).size > 20 }) {
-        val defaultCircuit = LearnedCircuit(
-            id = 1L,
-            name = "Recorrido Embalse Trasona",
-            startLat = 43.5350,
-            startLon = -5.9050,
-            turnLat = 43.5450,
-            turnLon = -5.8950,
-            totalLaps = (totalHistoryCount * 3).coerceAtLeast(5)
+    val allDetectedTurns = mutableListOf<GpsPoint>()
+
+    for (w in dbWorkouts) {
+        val pts = parseJsonRoute(w.routeGpsJson)
+        // Filter points with at least 15m spatial separation
+        val sampledPts = mutableListOf<GpsPoint>()
+        for (pt in pts) {
+            if (sampledPts.isEmpty() || distanceBetweenMeters(sampledPts.last(), pt) >= 15f) {
+                sampledPts.add(pt)
+            }
+        }
+        // Detect sharp turns (>= 25 degrees turn angle)
+        for (i in 1 until sampledPts.size - 1) {
+            val angle = calculateTurnAngleDegrees(sampledPts[i - 1], sampledPts[i], sampledPts[i + 1])
+            if (angle >= 25.0) {
+                allDetectedTurns.add(sampledPts[i])
+            }
+        }
+    }
+
+    if (totalHistoryCount >= 1 || allDetectedTurns.size >= 3) {
+        val startPt = GeoPoint(43.5350, -5.9050)
+        val turnPt = if (allDetectedTurns.isNotEmpty()) {
+            GeoPoint(allDetectedTurns.map { it.latitude }.average(), allDetectedTurns.map { it.longitude }.average())
+        } else {
+            GeoPoint(43.5450, -5.8950)
+        }
+
+        // Generate green outer boundary polyline enclosing the boya turn marker (with 20m outer offset)
+        val outerPath = listOf(
+            GeoPoint(startPt.latitude - 0.0003, startPt.longitude - 0.0004),
+            GeoPoint(turnPt.latitude + 0.0003, turnPt.longitude - 0.0004),
+            GeoPoint(turnPt.latitude + 0.0004, turnPt.longitude + 0.0004),
+            GeoPoint(startPt.latitude - 0.0003, startPt.longitude + 0.0004),
+            GeoPoint(startPt.latitude - 0.0003, startPt.longitude - 0.0004)
         )
-        return listOf(defaultCircuit)
+
+        val learned = LearnedCircuit(
+            id = 1L,
+            name = "Circuito Embalse (Boya >25°)",
+            startLat = startPt.latitude,
+            startLon = startPt.longitude,
+            turnLat = turnPt.latitude,
+            turnLon = turnPt.longitude,
+            totalLaps = (totalHistoryCount * 3).coerceAtLeast(5),
+            outerPolyline = outerPath
+        )
+        return listOf(learned)
     }
     return emptyList()
 }
@@ -1837,11 +1897,11 @@ fun AmbientModeScreen(
                     mapView.overlays.clear()
 
                     for (circuit in learnedCircuits) {
-                        val startGeo = GeoPoint(circuit.startLat, circuit.startLon)
                         val turnGeo = GeoPoint(circuit.turnLat, circuit.turnLon)
+                        val pathPts = if (circuit.outerPolyline.isNotEmpty()) circuit.outerPolyline else listOf(GeoPoint(circuit.startLat, circuit.startLon), turnGeo)
 
                         val greenPolyline = Polyline().apply {
-                            setPoints(listOf(startGeo, turnGeo))
+                            setPoints(pathPts)
                             outlinePaint.color = android.graphics.Color.GREEN
                             outlinePaint.strokeWidth = 6f
                         }
@@ -1849,7 +1909,7 @@ fun AmbientModeScreen(
 
                         val pinkMarker = Marker(mapView).apply {
                             position = turnGeo
-                            title = "Giro"
+                            title = "Boya Giro"
                         }
                         mapView.overlays.add(pinkMarker)
                     }
