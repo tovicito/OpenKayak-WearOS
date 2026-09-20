@@ -1296,63 +1296,40 @@ fun getLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): List<
         }
     }
 
-    // Convert clusters with >= 5 occurrences into learned Boyas with exact arithmetic mean centroid
-    val learnedList = mutableListOf<LearnedCircuit>()
-    var circuitIdCounter = 1L
+    // Extract mean centroid boya points for clusters with >= 5 occurrences
+    val validBoyas = mutableListOf<GeoPoint>()
+    var maxLaps = 0
 
     for (cluster in clusters) {
         if (cluster.size >= 5) {
             val meanLat = cluster.map { it.latitude }.average()
             val meanLon = cluster.map { it.longitude }.average()
-
-            val startPt = GeoPoint(43.5350, -5.9050)
-            val turnPt = GeoPoint(meanLat, meanLon)
-
-            val outerPath = listOf(
-                GeoPoint(startPt.latitude - 0.0002, startPt.longitude - 0.0003),
-                GeoPoint(turnPt.latitude + 0.0002, turnPt.longitude - 0.0003),
-                GeoPoint(turnPt.latitude + 0.0003, turnPt.longitude + 0.0003),
-                GeoPoint(startPt.latitude - 0.0002, startPt.longitude + 0.0003),
-                GeoPoint(startPt.latitude - 0.0002, startPt.longitude - 0.0003)
-            )
-
-            learnedList.add(
-                LearnedCircuit(
-                    id = circuitIdCounter++,
-                    name = "Boya $circuitIdCounter (Media Centroide: ${cluster.size}x)",
-                    startLat = startPt.latitude,
-                    startLon = startPt.longitude,
-                    turnLat = meanLat,
-                    turnLon = meanLon,
-                    totalLaps = cluster.size,
-                    outerPolyline = outerPath
-                )
-            )
+            validBoyas.add(GeoPoint(meanLat, meanLon))
+            if (cluster.size > maxLaps) maxLaps = cluster.size
         }
     }
 
-    if (learnedList.isNotEmpty()) return learnedList
+    if (validBoyas.isNotEmpty()) {
+        // Form a closed polygon polyline connecting all Boyas sequentially (A -> B -> C -> ... -> A)
+        val closedPolyline = mutableListOf<GeoPoint>()
+        closedPolyline.addAll(validBoyas)
+        if (validBoyas.size >= 2) {
+            closedPolyline.add(validBoyas.first())
+        }
 
-    // Fallback if < 5 turns in cluster but workouts exist
-    if (dbWorkouts.isNotEmpty()) {
-        val defaultCircuit = LearnedCircuit(
+        val learned = LearnedCircuit(
             id = 1L,
-            name = "Boya Embalse Trasona (Base)",
-            startLat = 43.5350,
-            startLon = -5.9050,
-            turnLat = 43.5450,
-            turnLon = -5.8950,
-            totalLaps = 5,
-            outerPolyline = listOf(
-                GeoPoint(43.5348, -5.9053),
-                GeoPoint(43.5452, -5.8953),
-                GeoPoint(43.5453, -5.8947),
-                GeoPoint(43.5348, -5.9047),
-                GeoPoint(43.5348, -5.9053)
-            )
+            name = "Circuito Asimilado (${validBoyas.size} Boyas)",
+            startLat = validBoyas.first().latitude,
+            startLon = validBoyas.first().longitude,
+            turnLat = validBoyas.last().latitude,
+            turnLon = validBoyas.last().longitude,
+            totalLaps = maxLaps,
+            outerPolyline = closedPolyline
         )
-        return listOf(defaultCircuit)
+        return listOf(learned)
     }
+
     return emptyList()
 }
 

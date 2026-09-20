@@ -154,17 +154,17 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                 if (characteristic != null) {
                     gatt.setCharacteristicNotification(characteristic, true)
                     val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
-                    descriptor?.let {
+                    if (descriptor != null) {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             gatt.writeDescriptor(
-                                it,
+                                descriptor,
                                 BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                             )
                         } else {
                             @Suppress("DEPRECATION")
-                            it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                             @Suppress("DEPRECATION")
-                            gatt.writeDescriptor(it)
+                            gatt.writeDescriptor(descriptor)
                         }
                     }
                 } else {

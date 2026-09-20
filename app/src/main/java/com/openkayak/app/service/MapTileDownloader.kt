@@ -93,7 +93,12 @@ class MapTileDownloader(private val context: Context) {
 
         scope.launch {
             try {
-                // Ensure Osmdroid configuration user agent is set properly
+                val osmdroidDir = java.io.File(context.filesDir, "osmdroid")
+                val tilesDir = java.io.File(osmdroidDir, "tiles")
+                if (!tilesDir.exists()) tilesDir.mkdirs()
+
+                Configuration.getInstance().osmdroidBasePath = osmdroidDir
+                Configuration.getInstance().osmdroidTileCache = tilesDir
                 Configuration.getInstance().userAgentValue = context.packageName
 
                 val (cacheManager, tilesAsturias, tilesTrasona) = run {
@@ -101,8 +106,8 @@ class MapTileDownloader(private val context: Context) {
                         setTileSource(TileSourceFactory.MAPNIK)
                     }
                     val cm = CacheManager(mapView)
-                    val tAst = cm.possibleTilesInArea(asturiasBoundingBox, 10, 14)
-                    val tTra = cm.possibleTilesInArea(trasonaBoundingBox, 15, 16)
+                    val tAst = try { cm.possibleTilesInArea(asturiasBoundingBox, 10, 12) } catch (e: Exception) { 150 }
+                    val tTra = try { cm.possibleTilesInArea(trasonaBoundingBox, 13, 14) } catch (e: Exception) { 100 }
                     Triple(cm, tAst, tTra)
                 }
                 val totalCombinedTiles = tilesAsturias + tilesTrasona
@@ -119,21 +124,21 @@ class MapTileDownloader(private val context: Context) {
                     context,
                     asturiasBoundingBox,
                     10,
-                    14,
+                    12,
                     object : CacheManager.CacheManagerCallback {
                         override fun onTaskComplete() {
                             _downloadState.update {
                                 it.copy(
-                                    currentPhaseText = "Fase 2/2: Embalse de Trasona Z15-Z16 ($tilesTrasona teselas)",
-                                    statusMessage = "Iniciando Fase 2: Trasona Z15-Z16..."
+                                    currentPhaseText = "Fase 2/2: Embalse de Trasona Z13-Z14 ($tilesTrasona teselas)",
+                                    statusMessage = "Iniciando Fase 2: Trasona Z13-Z14..."
                                 )
                             }
 
                             cacheManager.downloadAreaAsync(
                                 context,
                                 trasonaBoundingBox,
-                                15,
-                                16,
+                                13,
+                                14,
                                 object : CacheManager.CacheManagerCallback {
                                     override fun onTaskComplete() {
                                         _downloadState.update {

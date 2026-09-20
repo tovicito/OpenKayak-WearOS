@@ -393,7 +393,7 @@ class LocationService : Service() {
 
         if (!_workoutState.value.isTracking || _workoutState.value.isPaused) return
 
-        if (location.hasAccuracy() && location.accuracy > 15f) return
+        if (location.hasAccuracy() && location.accuracy > 30f) return
 
         var rawSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
         var addedDistance = 0f
