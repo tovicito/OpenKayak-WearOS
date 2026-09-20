@@ -18,6 +18,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -360,7 +362,10 @@ fun OpenKayakApp(
                 AmbientModeScreen(
                     workoutState = workoutState,
                     hrBpm = hrState.heartRateBpm,
-                    locationService = locationService
+                    locationService = locationService,
+                    onExitAmbient = {
+                        inactivitySeconds = 0
+                    }
                 )
             } else {
                 Box(
@@ -796,6 +801,18 @@ fun TwoSecondLongPressButton(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xFFD50000))
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        isPressing = true
+                        try {
+                            awaitRelease()
+                        } finally {
+                            isPressing = false
+                        }
+                    }
+                )
+            }
             .padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -808,27 +825,6 @@ fun TwoSecondLongPressButton(
                 strokeWidth = 3.dp
             )
         }
-
-        AndroidView(
-            factory = { context ->
-                android.view.View(context).apply {
-                    setOnTouchListener { _, event ->
-                        when (event.action) {
-                            MotionEvent.ACTION_DOWN -> {
-                                isPressing = true
-                                true
-                            }
-                            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                                isPressing = false
-                                true
-                            }
-                            else -> false
-                        }
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Canvas(modifier = Modifier.size(12.dp)) {
@@ -1246,19 +1242,24 @@ fun SettingsScreen(
 fun AmbientModeScreen(
     workoutState: WorkoutState,
     hrBpm: Int,
-    locationService: LocationService?
+    locationService: LocationService?,
+    onExitAmbient: () -> Unit
 ) {
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .padding(top = 16.dp, bottom = 4.dp, start = 8.dp, end = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 16.dp, bottom = 4.dp, start = 8.dp, end = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
         Text(
             text = formatTime(workoutState.elapsedTimeSeconds),
             fontSize = 26.sp,
@@ -1348,6 +1349,25 @@ fun AmbientModeScreen(
                     mapView.invalidate()
                 },
                 modifier = Modifier.fillMaxSize()
+            )
+        }
+        }
+
+        // Green 'X' Exit AOD Button in top-right corner
+        Button(
+            onClick = onExitAmbient,
+            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF00E676)),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 10.dp)
+                .size(32.dp)
+                .clip(CircleShape)
+        ) {
+            Text(
+                text = "X",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.Black
             )
         }
     }
