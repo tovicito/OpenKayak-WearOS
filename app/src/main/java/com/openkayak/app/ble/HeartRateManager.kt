@@ -212,7 +212,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                 @Suppress("DEPRECATION")
                 val data = characteristic?.value
-                if (data != null) {
+                if (data != null && data.isNotEmpty()) {
                     parseHeartRateMeasurement(data.copyOf())
                 }
             }
@@ -324,7 +324,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         autoScan10sJob = scope.launch {
             while (true) {
                 delay(10000L)
-                if (_hrState.value.connectionState == BleConnectionState.DISCONNECTED) {
+                if (isAutoReconnectEnabled && _hrState.value.connectionState == BleConnectionState.DISCONNECTED) {
                     val preferred = _hrState.value.preferredDeviceAddress ?: targetDeviceAddress
                     if (preferred != null) {
                         Log.d(TAG, "10s Auto-retry connecting to last BLE device: $preferred")
@@ -419,6 +419,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     @SuppressLint("MissingPermission")
     fun disconnect() {
         isAutoReconnectEnabled = false
+        autoScan10sJob?.cancel()
         reconnectJob?.cancel()
         stopScan()
         try {
