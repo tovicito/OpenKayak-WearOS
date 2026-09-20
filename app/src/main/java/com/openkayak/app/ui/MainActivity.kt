@@ -62,6 +62,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -730,7 +732,7 @@ fun DashboardScreen(
                             .height(36.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Start")
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Iniciar entrenamiento")
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("INICIAR", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
@@ -753,7 +755,7 @@ fun DashboardScreen(
                         ) {
                             Icon(
                                 if (workoutState.isPaused) Icons.Default.PlayArrow else Icons.Default.Refresh,
-                                contentDescription = "PauseResume"
+                                contentDescription = if (workoutState.isPaused) "Reanudar entrenamiento" else "Pausar entrenamiento"
                             )
                         }
 
@@ -801,6 +803,7 @@ fun TwoSecondLongPressButton(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xFFD50000))
+            .semantics { contentDescription = "Guardar entrenamiento" }
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
@@ -944,6 +947,7 @@ fun MapScreen(
                 .padding(start = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Página anterior" }
         ) {
             Text("<", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -957,6 +961,7 @@ fun MapScreen(
                 .padding(end = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Página siguiente" }
         ) {
             Text(">", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1362,6 +1367,7 @@ fun AmbientModeScreen(
                 .padding(top = 10.dp, end = 10.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Salir de modo ambiente" }
         ) {
             Text(
                 text = "X",
