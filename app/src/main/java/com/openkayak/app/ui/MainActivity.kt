@@ -768,7 +768,7 @@ fun DashboardScreen(
                         color = Color.LightGray
                     )
                     Text(
-                        text = String.format("%.1f", workoutState.speedKmh),
+                        text = String.format(java.util.Locale.US, "%.1f", workoutState.speedKmh),
                         fontSize = 24.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color(0xFFFFD700)
@@ -873,7 +873,7 @@ fun DashboardScreen(
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = String.format("%.2f km", workoutState.distanceMeters / 1000f),
+                        text = String.format(java.util.Locale.US, "%.2f km", workoutState.distanceMeters / 1000f),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.Cyan
@@ -1130,7 +1130,7 @@ fun MapScreen(
                 .padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             Text(
-                text = "GPS: ${trackPoints.size} pts | ${String.format("%.2f", workoutState.distanceMeters / 1000f)} km",
+                text = "GPS: ${trackPoints.size} pts | ${String.format(java.util.Locale.US, "%.2f", workoutState.distanceMeters / 1000f)} km",
                 fontSize = 11.sp,
                 color = Color.Yellow,
                 fontWeight = FontWeight.Bold
@@ -1269,7 +1269,7 @@ fun HistoryScreen() {
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = String.format("%.2f km", item.distanceMeters / 1000f),
+                                    text = String.format(java.util.Locale.US, "%.2f km", item.distanceMeters / 1000f),
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.Cyan
@@ -2040,7 +2040,7 @@ fun AmbientModeScreen(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(text = "KM/H", fontSize = 8.sp, color = Color.Gray)
                 Text(
-                    text = String.format("%.1f", workoutState.speedKmh),
+                    text = String.format(java.util.Locale.US, "%.1f", workoutState.speedKmh),
                     fontSize = 15.sp,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
@@ -2205,5 +2205,5 @@ private fun formatTime(seconds: Long): String {
     val h = seconds / 3600
     val m = (seconds % 3600) / 60
     val s = seconds % 60
-    return String.format("%02d:%02d:%02d", h, m, s)
+    return String.format(java.util.Locale.US, "%02d:%02d:%02d", h, m, s)
 }
