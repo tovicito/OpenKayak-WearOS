@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.location.Location
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -70,6 +72,8 @@ class LocationService : Service() {
     private val speedWindow = ArrayDeque<Float>(5)
     private var lastLocation: Location? = null
 
+    private var toneGenerator: ToneGenerator? = null
+
     private val _workoutState = MutableStateFlow(WorkoutState())
     val workoutState: StateFlow<WorkoutState> = _workoutState.asStateFlow()
 
@@ -87,6 +91,12 @@ class LocationService : Service() {
         strokeDetector = StrokeDetector(this)
         createNotificationChannel()
 
+        try {
+            toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
+        } catch (e: Exception) {
+            toneGenerator = null
+        }
+
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
                 for (location in locationResult.locations) {
@@ -98,12 +108,42 @@ class LocationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startWorkout()
-            ACTION_PAUSE -> pauseWorkout()
-            ACTION_RESUME -> resumeWorkout()
-            ACTION_STOP -> stopWorkout()
+            ACTION_START -> {
+                playBeepStart()
+                startWorkout()
+            }
+            ACTION_PAUSE -> {
+                playBeepPause()
+                pauseWorkout()
+            }
+            ACTION_RESUME -> {
+                playBeepPause()
+                resumeWorkout()
+            }
+            ACTION_STOP -> {
+                playBeepStop()
+                stopWorkout()
+            }
         }
         return START_STICKY
+    }
+
+    private fun playBeepStart() {
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+        } catch (e: Exception) {}
+    }
+
+    private fun playBeepPause() {
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP2, 120)
+        } catch (e: Exception) {}
+    }
+
+    private fun playBeepStop() {
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_PROMPT, 300)
+        } catch (e: Exception) {}
     }
 
     private fun createNotificationChannel() {
@@ -223,7 +263,6 @@ class LocationService : Service() {
     private fun processNewLocation(location: Location) {
         if (_workoutState.value.isPaused) return
 
-        // Filter 1: Accuracy check <= 15 meters
         if (location.hasAccuracy() && location.accuracy > 15f) return
 
         var rawSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
@@ -231,7 +270,6 @@ class LocationService : Service() {
 
         lastLocation?.let { prev ->
             val dist = prev.distanceTo(location)
-            // Motion filter reduced to 0.7m so low-speed paddling (e.g. 3 km/h) is accurately tracked
             if (dist >= 0.7f && dist < 100f) {
                 addedDistance = dist
                 val timeDiffSec = (location.time - prev.time) / 1000f
@@ -321,6 +359,8 @@ class LocationService : Service() {
         fusedLocationClient.removeLocationUpdates(locationCallback)
         strokeDetector.stop()
         serviceScope.cancel()
+        toneGenerator?.release()
+        toneGenerator = null
     }
 
     companion object {
