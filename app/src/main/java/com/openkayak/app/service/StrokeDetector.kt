@@ -70,6 +70,7 @@ class StrokeDetector(context: Context) : SensorEventListener {
         isTracking = false
         decayTimerJob?.cancel()
         sensorManager?.unregisterListener(this)
+        strokeTimestamps.clear()
         _strokeState.update { it.copy(strokeRateSpm = 0) }
     }
 
@@ -78,6 +79,7 @@ class StrokeDetector(context: Context) : SensorEventListener {
 
         // Minimum speed requirement: must be moving at >= 0.5 km/h to count strokes
         if (currentSpeedKmh < MIN_SPEED_KMH) {
+            strokeTimestamps.clear()
             _strokeState.update { it.copy(strokeRateSpm = 0) }
             return
         }
@@ -140,7 +142,10 @@ class StrokeDetector(context: Context) : SensorEventListener {
             while (isTracking) {
                 delay(1000L)
                 val now = System.currentTimeMillis()
-                val spm = calculateSpm(now)
+                val spm = if (currentSpeedKmh >= MIN_SPEED_KMH) calculateSpm(now) else 0
+                if (currentSpeedKmh < MIN_SPEED_KMH) {
+                    strokeTimestamps.clear()
+                }
                 _strokeState.update { it.copy(strokeRateSpm = spm) }
             }
         }

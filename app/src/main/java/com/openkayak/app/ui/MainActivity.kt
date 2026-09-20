@@ -291,7 +291,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -1360,7 +1360,7 @@ fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
 suspend fun getLearnedCircuitsAsync(context: Context, dbWorkouts: List<WorkoutEntity>): List<LearnedCircuit> = kotlinx.coroutines.withContext(Dispatchers.IO) {
     val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
     val customJson = prefs.getString("circuits_json", null)
-    if (!customJson.isNull_or_empty()) {
+    if (!customJson.isNullOrEmpty()) {
         try {
             val list = mutableListOf<LearnedCircuit>()
             val arr = org.json.JSONArray(customJson)
@@ -1518,8 +1518,6 @@ fun saveLearnedCircuits(context: Context, circuits: List<LearnedCircuit>) {
     context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
         .edit().putString("circuits_json", arr.toString()).apply()
 }
-
-private fun String?.isNull_or_empty(): Boolean = this == null || this.isEmpty()
 
 @Composable
 fun CircuitsScreen() {
@@ -1910,6 +1908,32 @@ fun SettingsScreen(
                                 Text("Olvidar Sensor Preferido", fontSize = 9.sp)
                             }
                         }
+                    }
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    onClick = {},
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Health Connect",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Green
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (healthConnectManager.healthConnectClient != null) "Estado: Activo" else "Estado: No disponible",
+                            fontSize = 10.sp,
+                            color = Color.White
+                        )
                     }
                 }
             }

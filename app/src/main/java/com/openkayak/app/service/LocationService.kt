@@ -135,7 +135,7 @@ class LocationService : Service() {
             } else {
                 val newObj = org.json.JSONObject()
                 newObj.put("id", System.currentTimeMillis())
-                newObj.put("name", "Boya Giro (${String.format("%.4f", turnLat)}, ${String.format("%.4f", turnLon)})")
+                newObj.put("name", "Boya Giro (${String.format(java.util.Locale.US, "%.4f", turnLat)}, ${String.format(java.util.Locale.US, "%.4f", turnLon)})")
                 newObj.put("startLat", track.firstOrNull()?.latitude ?: turnLat)
                 newObj.put("startLon", track.firstOrNull()?.longitude ?: turnLon)
                 newObj.put("turnLat", turnLat)
@@ -293,6 +293,8 @@ class LocationService : Service() {
         }
 
         synchronized(locationHistory) { locationHistory.clear() }
+        realtimeTrackPoints.clear()
+        lastSampledLocation = null
         speedWindow.clear()
         lastLocation = null
         lapOriginPoint = null

@@ -116,8 +116,8 @@ class MapTileDownloader(private val context: Context) {
                 _downloadState.update {
                     it.copy(
                         totalTiles = totalCombinedTiles,
-                        currentPhaseText = "Fase 1/2: Asturias Z10-Z14 ($tilesAsturias teselas)",
-                        statusMessage = "Iniciando Fase 1: Asturias Z10-Z14..."
+                        currentPhaseText = "Fase 1/2: Asturias Z10-Z12 ($tilesAsturias teselas)",
+                        statusMessage = "Iniciando Fase 1: Asturias Z10-Z12..."
                     )
                 }
 
@@ -178,7 +178,7 @@ class MapTileDownloader(private val context: Context) {
                                             it.copy(
                                                 downloadedTiles = totalDone,
                                                 progressPercent = percent.coerceIn(0, 100),
-                                                statusMessage = "Trasona Z15-Z16: $progress/$tilesTrasona ($percent%)"
+                                                statusMessage = "Trasona Z13-Z14: $progress/$tilesTrasona ($percent%)"
                                             )
                                         }
                                     }
@@ -212,7 +212,7 @@ class MapTileDownloader(private val context: Context) {
                                 it.copy(
                                     downloadedTiles = progress,
                                     progressPercent = percent.coerceIn(0, 100),
-                                    statusMessage = "Asturias Z10-Z14: $progress/$tilesAsturias ($percent%)"
+                                    statusMessage = "Asturias Z10-Z12: $progress/$tilesAsturias ($percent%)"
                                 )
                             }
                         }
