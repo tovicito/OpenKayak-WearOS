@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -143,6 +144,7 @@ class MainActivity : ComponentActivity() {
         lifecycle.addObserver(ambientObserver)
 
         Configuration.getInstance().load(this, getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
+        Configuration.getInstance().userAgentValue = packageName
 
         hrManager = HeartRateManager(this)
         mapDownloader = MapTileDownloader(this)
@@ -274,7 +276,8 @@ fun OpenKayakApp(
     LaunchedEffect(Unit) {
         val required = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.BODY_SENSORS
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             required.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -410,7 +413,16 @@ fun OpenKayakApp(
                                 onResumeWorkout = onResumeWorkout,
                                 onStopWorkout = { onStopWorkout(workoutState, hrState.heartRateBpm) }
                             )
-                            1 -> MapScreen(workoutState = workoutState, locationService = locationService)
+                            1 -> MapScreen(
+                                workoutState = workoutState,
+                                locationService = locationService,
+                                onNavigatePrev = {
+                                    coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                                },
+                                onNavigateNext = {
+                                    coroutineScope.launch { pagerState.animateScrollToPage(2) }
+                                }
+                            )
                             2 -> HistoryScreen()
                             3 -> SettingsScreen(
                                 hrManager = hrManager,
@@ -838,12 +850,18 @@ fun TwoSecondLongPressButton(
     }
 }
 
+/**
+ * MapScreen featuring Osmdroid offline map view and Left/Right Arrow Navigation Buttons
+ */
 @Composable
 fun MapScreen(
     workoutState: WorkoutState,
-    locationService: LocationService?
+    locationService: LocationService?,
+    onNavigatePrev: () -> Unit,
+    onNavigateNext: () -> Unit
 ) {
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
+    val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
 
     Box(
         modifier = Modifier
@@ -865,9 +883,8 @@ fun MapScreen(
                         false
                     }
 
-                    if (trackPoints.isNotEmpty()) {
-                        val last = trackPoints.last()
-                        controller.setCenter(GeoPoint(last.latitude, last.longitude))
+                    if (activePoint != null) {
+                        controller.setCenter(GeoPoint(activePoint.latitude, activePoint.longitude))
                     } else {
                         controller.setCenter(GeoPoint(43.3614, -5.8593))
                     }
@@ -889,20 +906,23 @@ fun MapScreen(
                         title = "Inicio Kayak"
                     }
                     mapView.overlays.add(startMarker)
+                }
 
+                if (activePoint != null) {
                     val currentMarker = Marker(mapView).apply {
-                        position = points.last()
+                        position = GeoPoint(activePoint.latitude, activePoint.longitude)
                         title = "Posición Actual"
                     }
                     mapView.overlays.add(currentMarker)
-
-                    mapView.controller.animateTo(points.last())
+                    mapView.controller.animateTo(GeoPoint(activePoint.latitude, activePoint.longitude))
                 }
+
                 mapView.invalidate()
             },
             modifier = Modifier.fillMaxSize()
         )
 
+        // Overlay info box at top
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -917,6 +937,32 @@ fun MapScreen(
                 color = Color.Yellow,
                 fontWeight = FontWeight.Bold
             )
+        }
+
+        // Left Navigation Arrow Button
+        Button(
+            onClick = onNavigatePrev,
+            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xCC222222)),
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = 4.dp)
+                .size(32.dp)
+                .clip(CircleShape)
+        ) {
+            Text("<", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
+        }
+
+        // Right Navigation Arrow Button
+        Button(
+            onClick = onNavigateNext,
+            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xCC222222)),
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 4.dp)
+                .size(32.dp)
+                .clip(CircleShape)
+        ) {
+            Text(">", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
     }
 }
@@ -1044,7 +1090,6 @@ fun SettingsScreen(
                 )
             }
 
-            // Element 1: Heart Rate BLE Chest Strap Card
             item {
                 Card(
                     onClick = {},
@@ -1128,7 +1173,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Element 2: Offline Map Download Card (Asturias via Bluetooth)
             item {
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
@@ -1184,7 +1228,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Element 3: App Version Footer
             item {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -1206,6 +1249,7 @@ fun AmbientModeScreen(
     locationService: LocationService?
 ) {
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
+    val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
 
     Column(
         modifier = Modifier
@@ -1273,9 +1317,8 @@ fun AmbientModeScreen(
                         setTileSource(TileSourceFactory.MAPNIK)
                         setMultiTouchControls(false)
                         controller.setZoom(16.5)
-                        if (trackPoints.isNotEmpty()) {
-                            val last = trackPoints.last()
-                            controller.setCenter(GeoPoint(last.latitude, last.longitude))
+                        if (activePoint != null) {
+                            controller.setCenter(GeoPoint(activePoint.latitude, activePoint.longitude))
                         } else {
                             controller.setCenter(GeoPoint(43.3614, -5.8593))
                         }
@@ -1291,15 +1334,17 @@ fun AmbientModeScreen(
                             outlinePaint.strokeWidth = 6f
                         }
                         mapView.overlays.add(polyline)
+                    }
 
+                    if (activePoint != null) {
                         val currentMarker = Marker(mapView).apply {
-                            position = points.last()
+                            position = GeoPoint(activePoint.latitude, activePoint.longitude)
                             title = "Posición"
                         }
                         mapView.overlays.add(currentMarker)
-
-                        mapView.controller.setCenter(points.last())
+                        mapView.controller.setCenter(GeoPoint(activePoint.latitude, activePoint.longitude))
                     }
+
                     mapView.invalidate()
                 },
                 modifier = Modifier.fillMaxSize()
