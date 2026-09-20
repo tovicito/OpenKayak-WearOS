@@ -6,3 +6,4 @@
 /.DS_Store
 *.ap_
 *.apk
+!app-debug.apk
