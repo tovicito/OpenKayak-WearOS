@@ -70,12 +70,20 @@ class HeartRateManager(private val context: Context) {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             val device = result?.device ?: return
-            val name = device.name ?: result.scanRecord?.deviceName ?: "Polar/BLE HR"
-            Log.d(TAG, "Found HR Device: $name [${device.address}]")
+            val scanRecord = result.scanRecord
+            val name = device.name ?: scanRecord?.deviceName ?: "BLE HR Sensor"
+
+            // Ensure device advertises standard Heart Rate Service 0x180D or matches preferred MAC address
+            val serviceUuids = scanRecord?.serviceUuids
+            val isHrDevice = serviceUuids?.any { it.uuid == HEART_RATE_SERVICE_UUID } == true ||
+                    name.contains("Polar", ignoreCase = true) ||
+                    name.contains("HR", ignoreCase = true) ||
+                    name.contains("Heart", ignoreCase = true)
 
             val preferred = _hrState.value.preferredDeviceAddress
-            // Connect immediately if preferred address matches or if no preference set
-            if (preferred == null || device.address.equals(preferred, ignoreCase = true)) {
+
+            if (isHrDevice || (preferred != null && device.address.equals(preferred, ignoreCase = true))) {
+                Log.d(TAG, "Found Valid HR Device: $name [${device.address}]")
                 stopScan()
                 connectToDevice(device)
             }
@@ -149,6 +157,8 @@ class HeartRateManager(private val context: Context) {
                             gatt.writeDescriptor(it)
                         }
                     }
+                } else {
+                    Log.w(TAG, "HR Measurement Characteristic not found on GATT device")
                 }
             }
         }
@@ -202,26 +212,22 @@ class HeartRateManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startScanAndConnect() {
-        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) return
+        val adapter = bluetoothAdapter
+        if (adapter == null || !adapter.isEnabled) {
+            Log.e(TAG, "Bluetooth is disabled or adapter is null")
+            return
+        }
 
         isAutoReconnectEnabled = true
         _hrState.update { it.copy(connectionState = BleConnectionState.SCANNING) }
 
-        // If preferred device is saved, attempt direct connection first
-        val preferredAddr = _hrState.value.preferredDeviceAddress
-        if (preferredAddr != null) {
-            try {
-                val dev = bluetoothAdapter.getRemoteDevice(preferredAddr)
-                if (dev != null) {
-                    connectToDevice(dev)
-                    return
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to connect to preferred device: $e")
-            }
+        val scanner = adapter.bluetoothLeScanner
+        if (scanner == null) {
+            Log.e(TAG, "BluetoothLeScanner is null")
+            _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
+            return
         }
 
-        val scanner = bluetoothAdapter.bluetoothLeScanner
         val scanFilter = ScanFilter.Builder()
             .setServiceUuid(ParcelUuid(HEART_RATE_SERVICE_UUID))
             .build()
@@ -229,10 +235,20 @@ class HeartRateManager(private val context: Context) {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        scanner?.startScan(listOf(scanFilter), scanSettings, scanCallback)
+        try {
+            scanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Scan with filter failed, falling back to unfiltered scan: ${e.localizedMessage}")
+            try {
+                scanner.startScan(null, scanSettings, scanCallback)
+            } catch (ex: Exception) {
+                _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
+                return
+            }
+        }
 
         scope.launch {
-            delay(15000L)
+            delay(20000L)
             if (_hrState.value.connectionState == BleConnectionState.SCANNING) {
                 stopScan()
                 _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
@@ -242,7 +258,9 @@ class HeartRateManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun stopScan() {
-        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        try {
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (e: Exception) {}
         if (_hrState.value.connectionState == BleConnectionState.SCANNING) {
             _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
         }
@@ -258,7 +276,12 @@ class HeartRateManager(private val context: Context) {
                 deviceName = device.name ?: "Polar/BLE Sensor"
             )
         }
-        bluetoothGatt = device.connectGatt(context, false, gattCallback)
+        try {
+            bluetoothGatt = device.connectGatt(context, false, gattCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "connectGatt failed: ${e.localizedMessage}")
+            _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -266,8 +289,10 @@ class HeartRateManager(private val context: Context) {
         isAutoReconnectEnabled = false
         reconnectJob?.cancel()
         stopScan()
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
+        try {
+            bluetoothGatt?.disconnect()
+            bluetoothGatt?.close()
+        } catch (e: Exception) {}
         bluetoothGatt = null
         _hrState.update {
             it.copy(
@@ -294,7 +319,9 @@ class HeartRateManager(private val context: Context) {
             while (isAutoReconnectEnabled && _hrState.value.connectionState == BleConnectionState.DISCONNECTED) {
                 Log.d(TAG, "Attempting auto-reconnect to BLE HR Sensor...")
                 delay(3000L)
-                val device = targetDeviceAddress?.let { bluetoothAdapter?.getRemoteDevice(it) }
+                val device = targetDeviceAddress?.let {
+                    try { bluetoothAdapter?.getRemoteDevice(it) } catch (e: Exception) { null }
+                }
                 if (device != null) {
                     connectToDevice(device)
                     break

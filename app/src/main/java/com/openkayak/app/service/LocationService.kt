@@ -16,6 +16,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -46,6 +47,7 @@ data class GpsPoint(
 data class WorkoutState(
     val isTracking: Boolean = false,
     val isPaused: Boolean = false,
+    val currentPoint: GpsPoint? = null,
     val speedKmh: Float = 0.0f,
     val maxSpeedKmh: Float = 0.0f,
     val distanceMeters: Float = 0.0f,
@@ -59,10 +61,10 @@ class LocationService : Service() {
     private val binder = LocalBinder()
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
-    private lateinit var strokeDetector: StrokeDetector
+    private var strokeDetector: StrokeDetector? = null
 
-    private val serviceJob = Job()
-    private val serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
+    private var serviceJob = Job()
+    private var serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
 
     private var timerJob: Job? = null
     private var strokeCollectorJob: Job? = null
@@ -88,7 +90,14 @@ class LocationService : Service() {
     override fun onCreate() {
         super.onCreate()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-        strokeDetector = StrokeDetector(this)
+
+        try {
+            strokeDetector = StrokeDetector(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "StrokeDetector init warning: ${e.localizedMessage}")
+            strokeDetector = null
+        }
+
         createNotificationChannel()
 
         try {
@@ -104,6 +113,8 @@ class LocationService : Service() {
                 }
             }
         }
+
+        startLocationUpdates()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -191,14 +202,20 @@ class LocationService : Service() {
     private fun startWorkout() {
         if (_workoutState.value.isTracking) return
 
+        if (serviceJob.isCancelled) {
+            serviceJob = Job()
+            serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
+        }
+
         synchronized(locationHistory) { locationHistory.clear() }
         speedWindow.clear()
         lastLocation = null
 
-        _workoutState.update {
+        _workoutState.update { current ->
             WorkoutState(
                 isTracking = true,
                 isPaused = false,
+                currentPoint = current.currentPoint,
                 speedKmh = 0.0f,
                 maxSpeedKmh = 0.0f,
                 distanceMeters = 0.0f,
@@ -212,14 +229,19 @@ class LocationService : Service() {
         startLocationUpdates()
         startTimer()
 
-        strokeDetector.start()
-        observeStrokes()
+        try {
+            strokeDetector?.start()
+            observeStrokes()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed starting stroke detector: ${e.localizedMessage}")
+        }
     }
 
     private fun observeStrokes() {
+        val detector = strokeDetector ?: return
         strokeCollectorJob?.cancel()
         strokeCollectorJob = serviceScope.launch {
-            strokeDetector.strokeState.collectLatest { strokeState ->
+            detector.strokeState.collectLatest { strokeState ->
                 _workoutState.update { current ->
                     current.copy(
                         strokeRateSpm = strokeState.strokeRateSpm,
@@ -233,11 +255,16 @@ class LocationService : Service() {
     private fun startForegroundServiceInternal() {
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+            try {
+                var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+                }
+                startForeground(NOTIFICATION_ID, notification, type)
+            } catch (e: Exception) {
+                Log.w(TAG, "Foreground HEALTH type fallback: ${e.localizedMessage}")
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
             }
-            startForeground(NOTIFICATION_ID, notification, type)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -245,23 +272,36 @@ class LocationService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun startLocationUpdates() {
-        val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            1000L
-        ).apply {
-            setMinUpdateIntervalMillis(1000L)
-            setWaitForAccurateLocation(false)
-        }.build()
+        try {
+            val locationRequest = LocationRequest.Builder(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                1000L
+            ).apply {
+                setMinUpdateIntervalMillis(1000L)
+                setWaitForAccurateLocation(false)
+            }.build()
 
-        fusedLocationClient.requestLocationUpdates(
-            locationRequest,
-            locationCallback,
-            Looper.getMainLooper()
-        )
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback,
+                Looper.getMainLooper()
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed requesting location updates: ${e.localizedMessage}")
+        }
     }
 
     private fun processNewLocation(location: Location) {
-        if (_workoutState.value.isPaused) return
+        val gpsPoint = GpsPoint(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            altitude = location.altitude,
+            timestamp = location.time
+        )
+
+        _workoutState.update { it.copy(currentPoint = gpsPoint) }
+
+        if (!_workoutState.value.isTracking || _workoutState.value.isPaused) return
 
         if (location.hasAccuracy() && location.accuracy > 15f) return
 
@@ -286,13 +326,6 @@ class LocationService : Service() {
         speedWindow.addLast(rawSpeedKmh)
         val smoothedSpeedKmh = speedWindow.average().toFloat()
 
-        val gpsPoint = GpsPoint(
-            latitude = location.latitude,
-            longitude = location.longitude,
-            altitude = location.altitude,
-            timestamp = location.time
-        )
-
         synchronized(locationHistory) {
             locationHistory.add(gpsPoint)
         }
@@ -311,8 +344,9 @@ class LocationService : Service() {
     private fun pauseWorkout() {
         if (!_workoutState.value.isTracking || _workoutState.value.isPaused) return
         _workoutState.update { it.copy(isPaused = true) }
-        fusedLocationClient.removeLocationUpdates(locationCallback)
-        strokeDetector.stop()
+        try {
+            strokeDetector?.stop()
+        } catch (e: Exception) {}
         timerJob?.cancel()
         updateNotification()
     }
@@ -321,14 +355,17 @@ class LocationService : Service() {
     private fun resumeWorkout() {
         if (!_workoutState.value.isTracking || !_workoutState.value.isPaused) return
         _workoutState.update { it.copy(isPaused = false) }
+        try {
+            strokeDetector?.start()
+        } catch (e: Exception) {}
         startLocationUpdates()
-        strokeDetector.start()
         startTimer()
     }
 
     private fun stopWorkout() {
-        fusedLocationClient.removeLocationUpdates(locationCallback)
-        strokeDetector.stop()
+        try {
+            strokeDetector?.stop()
+        } catch (e: Exception) {}
         timerJob?.cancel()
         strokeCollectorJob?.cancel()
         _workoutState.update { it.copy(isTracking = false, isPaused = false) }
@@ -350,20 +387,25 @@ class LocationService : Service() {
     }
 
     private fun updateNotification() {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification())
+        try {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID, buildNotification())
+        } catch (e: Exception) {}
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        fusedLocationClient.removeLocationUpdates(locationCallback)
-        strokeDetector.stop()
+        try {
+            fusedLocationClient.removeLocationUpdates(locationCallback)
+            strokeDetector?.stop()
+        } catch (e: Exception) {}
         serviceScope.cancel()
         toneGenerator?.release()
         toneGenerator = null
     }
 
     companion object {
+        private const val TAG = "LocationService"
         const val CHANNEL_ID = "openkayak_location_channel"
         const val NOTIFICATION_ID = 1001
 
