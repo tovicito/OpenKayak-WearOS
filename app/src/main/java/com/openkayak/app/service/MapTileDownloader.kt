@@ -51,37 +51,38 @@ class MapTileDownloader(private val context: Context) {
         -5.93  // Oeste
     )
 
-    @SuppressLint("MissingPermission")
-    fun isConnectedViaBluetooth(): Boolean {
+    fun isNetworkAvailable(): Boolean {
         try {
-            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bluetoothManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
-
-            // Check if Bluetooth is enabled and has paired/bonded devices (watch paired to phone)
-            val isBtEnabled = adapter != null && adapter.isEnabled && (adapter.bondedDevices?.isNotEmpty() == true)
-
             val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             val activeNetwork = connectivityManager?.activeNetwork
             val capabilities = connectivityManager?.getNetworkCapabilities(activeNetwork)
-            val isBtNetwork = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) == true
 
-            return isBtEnabled || isBtNetwork
+            val hasWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            val hasCellular = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+            val hasBluetooth = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) == true
+            val hasCapability = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+
+            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            val adapter = bluetoothManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
+            @SuppressLint("MissingPermission")
+            val isBtBonded = adapter != null && adapter.isEnabled && (adapter.bondedDevices?.isNotEmpty() == true)
+
+            return hasWifi || hasCellular || hasBluetooth || hasCapability || isBtBonded
         } catch (e: Exception) {
-            Log.w(TAG, "Bluetooth check exception: ${e.localizedMessage}")
-            return true // Fallback to true so download is not blocked on watches with non-standard Bluetooth stacks
+            Log.w(TAG, "Network check exception: ${e.localizedMessage}")
+            return true // Fallback to true so downloads are not blocked unnecessarily
         }
     }
 
     fun downloadAsturiasOfflineMap() {
-        if (!isConnectedViaBluetooth()) {
+        if (!isNetworkAvailable()) {
             _downloadState.update {
                 it.copy(
-                    statusMessage = "Error: Conecta el reloj por Bluetooth para descargar."
+                    statusMessage = "Error: Conecta el reloj a Wi-Fi o Bluetooth para descargar."
                 )
             }
             return
         }
-
         if (_downloadState.value.isDownloading) return
 
         _downloadState.update {

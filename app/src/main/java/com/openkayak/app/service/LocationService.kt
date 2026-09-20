@@ -406,9 +406,15 @@ class LocationService : Service() {
                 if (timeDiffSec > 0f && !location.hasSpeed()) {
                     rawSpeedKmh = (dist / timeDiffSec) * 3.6f
                 }
+                lastLocation = location
+            } else if (dist >= 100f) {
+                // Ignore unrealistic GPS jumps (> 100m) without updating lastLocation
+                Log.w(TAG, "Ignoring unrealistic GPS jump of $dist meters")
+                return
             }
+        } ?: run {
+            lastLocation = location
         }
-        lastLocation = location
 
         if (speedWindow.size >= 5) {
             speedWindow.removeFirst()

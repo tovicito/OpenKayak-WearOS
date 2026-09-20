@@ -44,10 +44,10 @@ class StrokeDetector(context: Context) : SensorEventListener {
     @Volatile
     var currentSpeedKmh: Float = 0f
 
-    private val MIN_SPEED_KMH = 1.2f
-    private val UPPER_THRESHOLD = 2.0f
-    private val LOWER_THRESHOLD = 0.5f
-    private val REFRACTORY_PERIOD_MS = 350L
+    private val MIN_SPEED_KMH = 0.5f
+    private val UPPER_THRESHOLD = 1.8f
+    private val LOWER_THRESHOLD = 0.4f
+    private val REFRACTORY_PERIOD_MS = 400L
 
     private var lastStrokeTimestamp = 0L
     private val strokeTimestamps = ArrayDeque<Long>()
@@ -76,14 +76,33 @@ class StrokeDetector(context: Context) : SensorEventListener {
     override fun onSensorChanged(event: SensorEvent?) {
         if (!isTracking || event == null) return
 
+        // Minimum speed requirement: must be moving at >= 0.5 km/h to count strokes
+        if (currentSpeedKmh < MIN_SPEED_KMH) {
+            _strokeState.update { it.copy(strokeRateSpm = 0) }
+            return
+        }
+
         val now = System.currentTimeMillis()
 
+        val ax = event.values[0]
         val ay = event.values[1]
         val az = event.values[2]
 
-        val currentAcc = sqrt((ay * ay + az * az).toDouble()).toFloat()
+        val absAx = Math.abs(ax)
+        val absAy = Math.abs(ay)
+        val absAz = Math.abs(az)
 
-        val filteredAcc = previousAcceleration + 0.3f * (currentAcc - previousAcceleration)
+        // Reject vertical stepping motion (walking/running):
+        // Walking produces strong vertical Z accelerations relative to forward/horizontal thrust (Y/X).
+        // If vertical upward motion dominates horizontal forward motion, ignore step impact.
+        if (absAz > (absAy + absAx) * 1.5f) {
+            return
+        }
+
+        // Horizontal forward paddle acceleration magnitude
+        val forwardAcc = sqrt((ax * ax + ay * ay).toDouble()).toFloat()
+
+        val filteredAcc = previousAcceleration + 0.3f * (forwardAcc - previousAcceleration)
 
         val isLocalPeak = previousAcceleration > UPPER_THRESHOLD && filteredAcc < previousAcceleration
 
