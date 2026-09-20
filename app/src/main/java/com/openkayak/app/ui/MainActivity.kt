@@ -1232,7 +1232,7 @@ fun SettingsScreen(
             item {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "OpenKayak Wear OS 5 v1.0",
+                    text = "OpenKayak Wear OS 5 v1.0.1",
                     fontSize = 10.sp,
                     color = Color.DarkGray,
                     textAlign = TextAlign.Center,

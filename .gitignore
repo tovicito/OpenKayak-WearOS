@@ -7,3 +7,4 @@
 *.ap_
 *.apk
 !app-debug.apk
+!openkayak-wearos-*.apk
