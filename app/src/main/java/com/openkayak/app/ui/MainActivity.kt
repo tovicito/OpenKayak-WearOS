@@ -258,7 +258,7 @@ class MainActivity : ComponentActivity() {
             unbindService(serviceConnection)
             isBound = false
         }
-        hrManager.disconnect()
+        hrManager.close()
         mapDownloader.close()
     }
 
