@@ -324,6 +324,9 @@ private fun loadSavedCircuits(context: Context): MutableList<LearnedCircuit> {
     return result
 }
 
+fun getSavedLearnedCircuits(context: Context): List<LearnedCircuit> =
+    loadSavedCircuits(context).filterNot { it.isDeleted }.sortedBy { it.name }
+
 fun saveLearnedCircuits(context: Context, circuits: List<LearnedCircuit>) {
     val array = JSONArray()
     for (c in circuits) {
