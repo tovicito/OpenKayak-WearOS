@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -1360,21 +1360,42 @@ fun CircuitsScreen() {
                     update = { mapView ->
                         mapView.overlays.clear()
                         val startGeo = GeoPoint(c.startLat, c.startLon)
-                        val turnGeo = GeoPoint(c.turnLat, c.turnLon)
 
-                        val greenPolyline = Polyline().apply {
-                            setPoints(listOf(startGeo, turnGeo))
-                            outlinePaint.color = android.graphics.Color.GREEN
-                            outlinePaint.strokeWidth = 10f
+                        if (c.outerPolyline.size >= 2) {
+                            val greenPolyline = Polyline().apply {
+                                setPoints(c.outerPolyline)
+                                outlinePaint.color = android.graphics.Color.GREEN
+                                outlinePaint.strokeWidth = 10f
+                            }
+                            mapView.overlays.add(greenPolyline)
+                        } else {
+                            val turnGeo = GeoPoint(c.turnLat, c.turnLon)
+                            val greenPolyline = Polyline().apply {
+                                setPoints(listOf(startGeo, turnGeo))
+                                outlinePaint.color = android.graphics.Color.GREEN
+                                outlinePaint.strokeWidth = 10f
+                            }
+                            mapView.overlays.add(greenPolyline)
                         }
-                        mapView.overlays.add(greenPolyline)
 
-                        val pinkMarker = Marker(mapView).apply {
-                            position = turnGeo
-                            title = "Giro Habitual"
-                            icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_compass)
+                        if (c.buoyPoints.isNotEmpty()) {
+                            c.buoyPoints.forEachIndexed { index, buoy ->
+                                val buoyMarker = Marker(mapView).apply {
+                                    position = buoy
+                                    title = "Boya ${index + 1}"
+                                    icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_compass)
+                                }
+                                mapView.overlays.add(buoyMarker)
+                            }
+                        } else {
+                            val turnGeo = GeoPoint(c.turnLat, c.turnLon)
+                            val pinkMarker = Marker(mapView).apply {
+                                position = turnGeo
+                                title = "Giro Habitual"
+                                icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_compass)
+                            }
+                            mapView.overlays.add(pinkMarker)
                         }
-                        mapView.overlays.add(pinkMarker)
 
                         mapView.controller.setCenter(startGeo)
                         mapView.invalidate()
@@ -1479,7 +1500,7 @@ fun SettingsScreen(
     hrState: com.openkayak.app.ble.BleHeartRateState,
     mapDownloader: MapTileDownloader,
     downloadState: com.openkayak.app.service.DownloadState,
-    healthConnectManager: HealthConnectManager
+    @Suppress("UNUSED_PARAMETER") healthConnectManager: HealthConnectManager
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
