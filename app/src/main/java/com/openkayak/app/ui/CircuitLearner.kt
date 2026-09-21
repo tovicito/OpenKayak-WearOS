@@ -434,7 +434,7 @@ suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEnt
             val previous = saved.firstOrNull { it.signature == candidate.signature }
             generated += LearnedCircuit(
                 id = previous?.id ?: stableCircuitId(candidate.signature),
-                name = previous?.name ?: "Circuito \${generated.size + 1} (\${buoys.size} boyas)",
+                name = previous?.name ?: "Circuito ${generated.size + 1} (${buoys.size} boyas)",
                 startLat = buoys.first().latitude,
                 startLon = buoys.first().longitude,
                 turnLat = buoys.first().latitude,
