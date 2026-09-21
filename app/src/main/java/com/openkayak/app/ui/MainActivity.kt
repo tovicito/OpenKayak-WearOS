@@ -226,6 +226,20 @@ class MainActivity : ComponentActivity() {
                             endTimeMillis = endTime,
                             distanceMeters = workoutState.distanceMeters
                         )
+
+                        // Rebuild learned circuits only after the raw workout is safely persisted.
+                        // The learner never mutates routeGpsJson, so historical workouts remain the source of truth.
+                        try {
+                            val workouts = db.workoutDao().getAllWorkouts().first()
+                            val result = analyzeLearnedCircuits(applicationContext, workouts)
+                            if (result.restoreCandidates.isNotEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    onCircuitRestoreCandidates(result.restoreCandidates)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Learned circuit analysis failed: " + e.localizedMessage, e)
+                        }
                     }
 
                     val stopIntent = Intent(this, LocationService::class.java).apply {
