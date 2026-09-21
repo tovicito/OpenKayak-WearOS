@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/learned-buoys-circuits
+      - fix/map-downloader-aod
   workflow_dispatch:
 
 permissions:
