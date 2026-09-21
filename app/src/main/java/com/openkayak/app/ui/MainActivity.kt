@@ -98,7 +98,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -115,6 +118,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var healthConnectManager: HealthConnectManager
 
     private val isSystemAmbientMode = mutableStateOf(false)
+    private val pendingCircuitRestore = MutableStateFlow<LearnedCircuit?>(null)
 
     private val ambientCallback = object : AmbientLifecycleObserver.AmbientLifecycleCallback {
         override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
@@ -169,6 +173,7 @@ class MainActivity : ComponentActivity() {
                 mapDownloader = mapDownloader,
                 healthConnectManager = healthConnectManager,
                 isSystemAmbient = isSystemAmbientMode.value,
+                pendingCircuitRestore = pendingCircuitRestore,
                 onStartWorkout = {
                     val startIntent = Intent(this, LocationService::class.java).apply {
                         action = LocationService.ACTION_START
@@ -222,6 +227,20 @@ class MainActivity : ComponentActivity() {
                             endTimeMillis = endTime,
                             distanceMeters = workoutState.distanceMeters
                         )
+
+                        // Rebuild learned circuits only after the raw workout is safely persisted.
+                        // The learner never mutates routeGpsJson, so historical workouts remain the source of truth.
+                        try {
+                            val workouts = db.workoutDao().getAllWorkouts().first()
+                            val result = analyzeLearnedCircuits(applicationContext, workouts)
+                            if (result.restoreCandidates.isNotEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    pendingCircuitRestore.value = result.restoreCandidates.firstOrNull()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "Learned circuit analysis failed: " + e.localizedMessage, e)
+                        }
                     }
 
                     val stopIntent = Intent(this, LocationService::class.java).apply {
@@ -283,7 +302,8 @@ fun OpenKayakApp(
     onStartWorkout: () -> Unit,
     onPauseWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
-    onStopWorkout: (WorkoutState, Int) -> Unit
+    onStopWorkout: (WorkoutState, Int) -> Unit,
+    pendingCircuitRestore: StateFlow<LearnedCircuit?>
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -348,6 +368,7 @@ fun OpenKayakApp(
     val downloadState by mapDownloader.downloadState.collectAsState()
 
     var pendingRestoreCircuit by remember { mutableStateOf<LearnedCircuit?>(null) }
+    LaunchedEffect(Unit) { pendingCircuitRestore.collect { pendingRestoreCircuit = it } }
 
     var isWaterTouchLocked by remember { mutableStateOf(false) }
     var unlockTimeRemainingSeconds by remember { mutableStateOf(0) }
@@ -510,46 +531,21 @@ fun OpenKayakApp(
                             circuitName = circuit.name,
                             onRestore = {
                                 coroutineScope.launch(Dispatchers.IO) {
-                                    val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
-                                    val customJson = prefs.getString("circuits_json", null)
-                                    if (!customJson.isNullOrEmpty()) {
-                                        try {
-                                            val arr = org.json.JSONArray(customJson)
-                                            for (i in 0 until arr.length()) {
-                                                val obj = arr.getJSONObject(i)
-                                                if (obj.getLong("id") == circuit.id) {
-                                                    obj.put("isDeleted", false)
-                                                    break
-                                                }
-                                            }
-                                            prefs.edit().putString("circuits_json", arr.toString()).apply()
-                                        } catch (e: Exception) {}
-                                    }
+                                    restoreLearnedCircuit(context, circuit.id)
+                                    withContext(Dispatchers.Main) { pendingRestoreCircuit = null }
                                 }
-                                pendingRestoreCircuit = null
                             },
                             onKeepDeleted = {
-                                pendingRestoreCircuit = null
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    declineCircuitRestore(context, circuit.id, circuit.evidenceCount)
+                                    withContext(Dispatchers.Main) { pendingRestoreCircuit = null }
+                                }
                             },
                             onPermanentDelete = {
                                 coroutineScope.launch(Dispatchers.IO) {
-                                    val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
-                                    val customJson = prefs.getString("circuits_json", null)
-                                    if (!customJson.isNullOrEmpty()) {
-                                        try {
-                                            val arr = org.json.JSONArray(customJson)
-                                            val newArr = org.json.JSONArray()
-                                            for (i in 0 until arr.length()) {
-                                                val obj = arr.getJSONObject(i)
-                                                if (obj.getLong("id") != circuit.id) {
-                                                    newArr.put(obj)
-                                                }
-                                            }
-                                            prefs.edit().putString("circuits_json", newArr.toString()).apply()
-                                        } catch (e: Exception) {}
-                                    }
+                                    permanentlyDeleteLearnedCircuit(context, circuit.id)
+                                    withContext(Dispatchers.Main) { pendingRestoreCircuit = null }
                                 }
-                                pendingRestoreCircuit = null
                             }
                         )
                     }
@@ -1035,7 +1031,7 @@ fun MapScreen(
     var learnedCircuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
 
     LaunchedEffect(workoutList) {
-        learnedCircuits = getLearnedCircuitsAsync(context, workoutList)
+        learnedCircuits = getSavedLearnedCircuits(context)
     }
 
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
@@ -1071,23 +1067,24 @@ fun MapScreen(
             update = { mapView ->
                 mapView.overlays.clear()
 
-                // Render learned green routes & pink turnaround markers
+                // Learned circuits are real closed GPS segments. Every learned turn becomes a pink buoy.
                 for (circuit in learnedCircuits) {
-                    val turnGeo = GeoPoint(circuit.turnLat, circuit.turnLon)
-                    val pathPts = if (circuit.outerPolyline.isNotEmpty()) circuit.outerPolyline else listOf(GeoPoint(circuit.startLat, circuit.startLon), turnGeo)
-
-                    val greenPolyline = Polyline().apply {
-                        setPoints(pathPts)
-                        outlinePaint.color = android.graphics.Color.GREEN
-                        outlinePaint.strokeWidth = 8f
+                    if (circuit.outerPolyline.size >= 2) {
+                        val greenPolyline = Polyline().apply {
+                            setPoints(circuit.outerPolyline)
+                            outlinePaint.color = android.graphics.Color.GREEN
+                            outlinePaint.strokeWidth = 8f
+                        }
+                        mapView.overlays.add(greenPolyline)
                     }
-                    mapView.overlays.add(greenPolyline)
 
-                    val pinkMarker = Marker(mapView).apply {
-                        position = turnGeo
-                        title = "Boya Giro: ${circuit.name}"
+                    circuit.buoyPoints.forEachIndexed { index, buoy ->
+                        val marker = Marker(mapView).apply {
+                            position = buoy
+                            title = "Boya " + (index + 1) + ": " + circuit.name
+                        }
+                        mapView.overlays.add(marker)
                     }
-                    mapView.overlays.add(pinkMarker)
                 }
 
                 val points = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
@@ -1312,7 +1309,7 @@ fun HistoryScreen() {
     }
 }
 
-private fun parseJsonRoute(json: String): List<GpsPoint> {
+fun parseJsonRoute(json: String): List<GpsPoint> {
     val points = mutableListOf<GpsPoint>()
     try {
         val array = org.json.JSONArray(json)
@@ -1329,227 +1326,7 @@ private fun parseJsonRoute(json: String): List<GpsPoint> {
         }
     } catch (e: Exception) {}
     return points
-}
-
-data class LearnedCircuit(
-    val id: Long,
-    val name: String,
-    val startLat: Double,
-    val startLon: Double,
-    val turnLat: Double,
-    val turnLon: Double,
-    val totalLaps: Int,
-    val outerPolyline: List<GeoPoint> = emptyList(),
-    val isDeleted: Boolean = false
-)
-
-fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double {
-    val b1 = Math.toDegrees(Math.atan2(p2.longitude - p1.longitude, p2.latitude - p1.latitude))
-    val b2 = Math.toDegrees(Math.atan2(p3.longitude - p2.longitude, p3.latitude - p2.latitude))
-    var diff = Math.abs(b2 - b1)
-    if (diff > 180.0) diff = 360.0 - diff
-    return diff
-}
-
-fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
-    val res = FloatArray(1)
-    android.location.Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, res)
-    return res[0]
-}
-
-suspend fun getLearnedCircuitsAsync(context: Context, dbWorkouts: List<WorkoutEntity>): List<LearnedCircuit> = kotlinx.coroutines.withContext(Dispatchers.IO) {
-    val prefs = context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
-    val customJson = prefs.getString("circuits_json", null)
-    val savedCircuits = mutableListOf<LearnedCircuit>()
-    val deletedCircuitIds = mutableSetOf<Long>()
-
-    if (!customJson.isNull_or_empty()) {
-        try {
-            val arr = org.json.JSONArray(customJson)
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                val isDeleted = obj.optBoolean("isDeleted", false)
-                val id = obj.getLong("id")
-                if (isDeleted) {
-                    deletedCircuitIds.add(id)
-                } else {
-                    val polyArr = obj.optJSONArray("outerPolyline")
-                    val polyList = mutableListOf<GeoPoint>()
-                    if (polyArr != null) {
-                        for (j in 0 until polyArr.length()) {
-                            val pObj = polyArr.getJSONObject(j)
-                            polyList.add(GeoPoint(pObj.getDouble("lat"), pObj.getDouble("lon")))
-                        }
-                    }
-                    savedCircuits.add(
-                        LearnedCircuit(
-                            id = id,
-                            name = obj.getString("name"),
-                            startLat = obj.getDouble("startLat"),
-                            startLon = obj.getDouble("startLon"),
-                            turnLat = obj.getDouble("turnLat"),
-                            turnLon = obj.getDouble("turnLon"),
-                            totalLaps = obj.getInt("totalLaps"),
-                            outerPolyline = polyList,
-                            isDeleted = false
-                        )
-                    )
-                }
-            }
-        } catch (e: Exception) {}
-    }
-
-    // Process raw workouts into independent circuits and real GPS trajectories
-    val parsedWorkouts = dbWorkouts.map { parseJsonRoute(it.routeGpsJson) }.filter { it.size >= 3 }
-    val rawTurns = mutableListOf<GpsPoint>()
-
-    for (pts in parsedWorkouts) {
-        val sampled = mutableListOf<GpsPoint>()
-        for (pt in pts) {
-            if (sampled.isEmpty() || distanceBetweenMeters(sampled.last(), pt) >= 15f) {
-                sampled.add(pt)
-            }
-        }
-        for (i in 1 until sampled.size - 1) {
-            val angle = calculateTurnAngleDegrees(sampled[i - 1], sampled[i], sampled[i + 1])
-            if (angle >= 20.0) {
-                rawTurns.add(sampled[i])
-            }
-        }
-    }
-
-    // Group turn points into spatial buoy clusters (15m radius)
-    val buoyClusters = mutableListOf<MutableList<GpsPoint>>()
-    for (turn in rawTurns) {
-        var added = false
-        for (cluster in buoyClusters) {
-            val avgLat = cluster.map { it.latitude }.average()
-            val avgLon = cluster.map { it.longitude }.average()
-            val center = GpsPoint(avgLat, avgLon, 0.0, 0L)
-            if (distanceBetweenMeters(turn, center) <= 15f) {
-                cluster.add(turn)
-                added = true
-                break
-            }
-        }
-        if (!added) {
-            buoyClusters.add(mutableListOf(turn))
-        }
-    }
-
-    val validBuoys = buoyClusters.filter { it.size >= 5 }.map { cluster ->
-        val avgLat = cluster.map { it.latitude }.average()
-        val avgLon = cluster.map { it.longitude }.average()
-        GeoPoint(avgLat, avgLon)
-    }
-
-    if (validBuoys.isEmpty()) return@withContext savedCircuits
-
-    val generatedCircuits = mutableListOf<LearnedCircuit>()
-    var circuitIdCounter = 100L
-
-    val unassignedBuoys = validBuoys.toMutableList()
-    while (unassignedBuoys.isNotEmpty()) {
-        val currentGroup = mutableListOf<GeoPoint>()
-        currentGroup.add(unassignedBuoys.removeAt(0))
-
-        var addedMore = true
-        while (addedMore) {
-            addedMore = false
-            val iterator = unassignedBuoys.iterator()
-            while (iterator.hasNext()) {
-                val buoy = iterator.next()
-                val isConnected = currentGroup.any { g ->
-                    val p1 = GpsPoint(g.latitude, g.longitude, 0.0, 0L)
-                    val p2 = GpsPoint(buoy.latitude, buoy.longitude, 0.0, 0L)
-                    distanceBetweenMeters(p1, p2) <= 500f
-                }
-                if (isConnected) {
-                    currentGroup.add(buoy)
-                    iterator.remove()
-                    addedMore = true
-                }
-            }
-        }
-
-        if (currentGroup.size >= 2) {
-            // Find actual representative GPS track between buoys across workouts
-            var bestPolyline: List<GeoPoint> = emptyList()
-            for (pts in parsedWorkouts) {
-                val matchingIndices = mutableListOf<Int>()
-                for (b in currentGroup) {
-                    val idx = pts.indexOfFirst { pt ->
-                        distanceBetweenMeters(pt, GpsPoint(b.latitude, b.longitude, 0.0, 0L)) <= 30f
-                    }
-                    if (idx != -1) matchingIndices.add(idx)
-                }
-                if (matchingIndices.size >= 2) {
-                    matchingIndices.sort()
-                    val subTrack = pts.subList(matchingIndices.first(), matchingIndices.last() + 1)
-                        .map { GeoPoint(it.latitude, it.longitude) }
-                    if (subTrack.size > bestPolyline.size) {
-                        bestPolyline = subTrack
-                    }
-                }
-            }
-
-            if (bestPolyline.isEmpty()) {
-                bestPolyline = currentGroup.toList() + currentGroup.first()
-            }
-
-            val cId = circuitIdCounter++
-            if (!deletedCircuitIds.contains(cId)) {
-                val learned = LearnedCircuit(
-                    id = cId,
-                    name = "Circuito Asimilado ${generatedCircuits.size + 1} (${currentGroup.size} Boyas)",
-                    startLat = currentGroup.first().latitude,
-                    startLon = currentGroup.first().longitude,
-                    turnLat = currentGroup.last().latitude,
-                    turnLon = currentGroup.last().longitude,
-                    totalLaps = 5,
-                    outerPolyline = bestPolyline,
-                    isDeleted = false
-                )
-                generatedCircuits.add(learned)
-            }
-        }
-    }
-
-    val combined = (savedCircuits + generatedCircuits).distinctBy { it.id }
-    return@withContext combined
-}
-
-fun saveLearnedCircuits(context: Context, circuits: List<LearnedCircuit>) {
-    val arr = org.json.JSONArray()
-    for (c in circuits) {
-        val obj = org.json.JSONObject()
-        obj.put("id", c.id)
-        obj.put("name", c.name)
-        obj.put("startLat", c.startLat)
-        obj.put("startLon", c.startLon)
-        obj.put("turnLat", c.turnLat)
-        obj.put("turnLon", c.turnLon)
-        obj.put("totalLaps", c.totalLaps)
-        obj.put("isDeleted", c.isDeleted)
-
-        val polyArr = org.json.JSONArray()
-        for (pt in c.outerPolyline) {
-            val pObj = org.json.JSONObject()
-            pObj.put("lat", pt.latitude)
-            pObj.put("lon", pt.longitude)
-            polyArr.put(pObj)
-        }
-        obj.put("outerPolyline", polyArr)
-
-        arr.put(obj)
-    }
-    context.getSharedPreferences("learned_circuits_prefs", Context.MODE_PRIVATE)
-        .edit().putString("circuits_json", arr.toString()).apply()
-}
-
-private fun String?.isNull_or_empty(): Boolean = this == null || this.isEmpty()
-
-@Composable
+}@Composable
 fun CircuitsScreen() {
     val context = LocalContext.current
     val db = remember { KayakDatabase.getInstance(context) }
@@ -1557,7 +1334,7 @@ fun CircuitsScreen() {
     var circuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
 
     LaunchedEffect(workoutList) {
-        circuits = getLearnedCircuitsAsync(context, workoutList)
+        circuits = getSavedLearnedCircuits(context)
     }
 
     val listState = rememberScalingLazyListState()
@@ -1672,16 +1449,15 @@ fun CircuitsScreen() {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Vueltas aprendidas: ${circuit.totalLaps}",
+                                    text = "Evidencias: ${circuit.evidenceCount} | Boyas: ${circuit.buoyPoints.size}",
                                     fontSize = 10.sp,
                                     color = Color.Magenta
                                 )
 
                                 Button(
                                     onClick = {
-                                        val updated = circuits.filter { it.id != circuit.id }
-                                        circuits = updated
-                                        saveLearnedCircuits(context, updated)
+                                        softDeleteLearnedCircuit(context, circuit.id)
+                                        circuits = circuits.filterNot { it.id == circuit.id }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
                                     modifier = Modifier.size(22.dp)
@@ -2102,7 +1878,7 @@ fun AmbientModeScreen(
         var learnedCircuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
 
         LaunchedEffect(workoutList) {
-            learnedCircuits = getLearnedCircuitsAsync(context, workoutList)
+            learnedCircuits = getSavedLearnedCircuits(context)
         }
 
         Box(
