@@ -177,7 +177,7 @@ class MapTileDownloader(private val context: Context) {
                     _downloadState.update {
                         DownloadState(
                             isDownloading = false,
-                            statusMessage = "Error en la descarga: ${e.localizedMessage}"
+                            statusMessage = "Error en la descarga. Por favor, reintente."
                         )
                     }
                 }
