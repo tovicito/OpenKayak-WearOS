@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import java.util.UUID
 
 enum class BleConnectionState {
@@ -523,6 +524,28 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                 heartRateBpm = 0
             )
         }
+    }
+
+    fun close() {
+        isAutoReconnectEnabled = false
+        autoScan10sJob?.cancel()
+        autoScan10sJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        bleMeasurementWatchdogJob?.cancel()
+        bleMeasurementWatchdogJob = null
+        lastPulseResetJob?.cancel()
+        lastPulseResetJob = null
+        stopScan()
+        stopWatchHrSensor()
+        try {
+            bluetoothGatt?.disconnect()
+            bluetoothGatt?.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing HR GATT: ${e.localizedMessage}")
+        }
+        bluetoothGatt = null
+        scope.cancel()
     }
 
     fun clearPreferredDevice() {
