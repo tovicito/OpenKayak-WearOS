@@ -6,3 +6,5 @@
 /.DS_Store
 *.ap_
 *.apk
+!openkayak-debug.apk
+!openkayak-wearos-*.apk

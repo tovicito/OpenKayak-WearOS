@@ -56,6 +56,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -903,7 +905,7 @@ fun DashboardScreen(
                             .height(36.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Start")
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Iniciar entrenamiento")
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("INICIAR", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
@@ -926,7 +928,7 @@ fun DashboardScreen(
                         ) {
                             Icon(
                                 if (workoutState.isPaused) Icons.Default.PlayArrow else Icons.Default.Refresh,
-                                contentDescription = "PauseResume"
+                                contentDescription = if (workoutState.isPaused) "Reanudar entrenamiento" else "Pausar entrenamiento"
                             )
                         }
 
@@ -1146,6 +1148,7 @@ fun MapScreen(
                 .padding(start = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Página anterior" }
         ) {
             Text("<", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1159,6 +1162,7 @@ fun MapScreen(
                 .padding(end = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Página siguiente" }
         ) {
             Text(">", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1219,6 +1223,7 @@ fun HistoryScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar vista previa" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1299,7 +1304,9 @@ fun HistoryScreen() {
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar entrenamiento" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -1613,6 +1620,7 @@ fun CircuitsScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar vista previa" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1684,7 +1692,9 @@ fun CircuitsScreen() {
                                         saveLearnedCircuits(context, updated)
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar recorrido" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -2000,7 +2010,7 @@ fun SettingsScreen(
             item {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "OpenKayak Wear OS 5 v1.0",
+                    text = "OpenKayak Wear OS 5 v1.0.1",
                     fontSize = 10.sp,
                     color = Color.DarkGray,
                     textAlign = TextAlign.Center,
@@ -2218,6 +2228,7 @@ fun AmbientModeScreen(
                 .padding(top = 10.dp, end = 10.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Salir del modo ambiente" }
         ) {
             Text(
                 text = "X",
