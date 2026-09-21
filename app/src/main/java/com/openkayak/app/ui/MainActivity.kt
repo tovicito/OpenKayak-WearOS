@@ -98,6 +98,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -172,7 +173,7 @@ class MainActivity : ComponentActivity() {
                 mapDownloader = mapDownloader,
                 healthConnectManager = healthConnectManager,
                 isSystemAmbient = isSystemAmbientMode.value,
-                onCircuitRestoreCandidates = { candidates -> pendingCircuitRestore.value = candidates.firstOrNull() },
+                pendingCircuitRestore = pendingCircuitRestore,
                 onStartWorkout = {
                     val startIntent = Intent(this, LocationService::class.java).apply {
                         action = LocationService.ACTION_START
@@ -234,7 +235,7 @@ class MainActivity : ComponentActivity() {
                             val result = analyzeLearnedCircuits(applicationContext, workouts)
                             if (result.restoreCandidates.isNotEmpty()) {
                                 withContext(Dispatchers.Main) {
-                                    onCircuitRestoreCandidates(result.restoreCandidates)
+                                    pendingCircuitRestore.value = result.restoreCandidates.firstOrNull()
                                 }
                             }
                         } catch (e: Exception) {
@@ -302,7 +303,7 @@ fun OpenKayakApp(
     onPauseWorkout: () -> Unit,
     onResumeWorkout: () -> Unit,
     onStopWorkout: (WorkoutState, Int) -> Unit,
-    onCircuitRestoreCandidates: (List<LearnedCircuit>) -> Unit
+    pendingCircuitRestore: StateFlow<LearnedCircuit?>
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -1308,7 +1309,7 @@ fun HistoryScreen() {
     }
 }
 
-private fun parseJsonRoute(json: String): List<GpsPoint> {
+fun parseJsonRoute(json: String): List<GpsPoint> {
     val points = mutableListOf<GpsPoint>()
     try {
         val array = org.json.JSONArray(json)
@@ -1326,6 +1327,153 @@ private fun parseJsonRoute(json: String): List<GpsPoint> {
     } catch (e: Exception) {}
     return points
 }@Composable
+fun CircuitsScreen() {
+    val context = LocalContext.current
+    val db = remember { KayakDatabase.getInstance(context) }
+    val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
+    var circuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
+
+    LaunchedEffect(workoutList) {
+        circuits = getSavedLearnedCircuits(context)
+    }
+
+    val listState = rememberScalingLazyListState()
+    var previewCircuit by remember { mutableStateOf<LearnedCircuit?>(null) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(top = 20.dp, bottom = 12.dp)
+    ) {
+        if (previewCircuit != null) {
+            val c = previewCircuit!!
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { ctx ->
+                        MapView(ctx).apply {
+                            setTileSource(TileSourceFactory.MAPNIK)
+                            setMultiTouchControls(true)
+                            controller.setZoom(15.5)
+                        }
+                    },
+                    update = { mapView ->
+                        mapView.overlays.clear()
+                        val startGeo = GeoPoint(c.startLat, c.startLon)
+                        val turnGeo = GeoPoint(c.turnLat, c.turnLon)
+
+                        val greenPolyline = Polyline().apply {
+                            setPoints(listOf(startGeo, turnGeo))
+                            outlinePaint.color = android.graphics.Color.GREEN
+                            outlinePaint.strokeWidth = 10f
+                        }
+                        mapView.overlays.add(greenPolyline)
+
+                        val pinkMarker = Marker(mapView).apply {
+                            position = turnGeo
+                            title = "Giro Habitual"
+                            icon = ContextCompat.getDrawable(context, android.R.drawable.ic_menu_compass)
+                        }
+                        mapView.overlays.add(pinkMarker)
+
+                        mapView.controller.setCenter(startGeo)
+                        mapView.invalidate()
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                Button(
+                    onClick = { previewCircuit = null },
+                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xCC000000)),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .size(32.dp)
+                        .clip(CircleShape)
+                ) {
+                    Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else if (circuits.isEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "Sin Recorridos",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Gray
+                )
+                Text(
+                    text = "Completa 5 vueltas para asimilar",
+                    fontSize = 10.sp,
+                    color = Color.DarkGray,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            ScalingLazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                item {
+                    Text(
+                        text = "RECORRIDOS ASIMILADOS",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Yellow,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                }
+
+                items(circuits) { circuit ->
+                    Card(
+                        onClick = { previewCircuit = circuit },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(6.dp)) {
+                            Text(
+                                text = circuit.name,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Green
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Evidencias: ${circuit.evidenceCount} | Boyas: ${circuit.buoyPoints.size}",
+                                    fontSize = 10.sp,
+                                    color = Color.Magenta
+                                )
+
+                                Button(
+                                    onClick = {
+                                        softDeleteLearnedCircuit(context, circuit.id)
+                                        circuits = circuits.filterNot { it.id == circuit.id }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun SettingsScreen(
     hrManager: HeartRateManager,
     hrState: com.openkayak.app.ble.BleHeartRateState,
