@@ -1878,7 +1878,7 @@ fun AmbientModeScreen(
         var learnedCircuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
 
         LaunchedEffect(workoutList) {
-            learnedCircuits = getLearnedCircuitsAsync(context, workoutList)
+            learnedCircuits = getSavedLearnedCircuits(context)
         }
 
         Box(
