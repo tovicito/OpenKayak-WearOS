@@ -41,18 +41,40 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Put compiled APK in repository root
-        run: cp app/build/outputs/apk/debug/app-debug.apk openkayak-debug.apk
-
-      - name: Commit compiled APK to this branch
+      - name: Publish compiled APK to branch root
         if: github.event_name == 'push'
         run: |
+          set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add openkayak-debug.apk
-          git diff --cached --quiet && exit 0
-          git commit -m "chore: publish debug APK [skip ci]" || exit 0
+
+          # Synchronize before creating the APK commit. This avoids rebasing a
+          # commit that already contains the generated binary.
           git fetch origin "${GITHUB_REF_NAME}"
           git rebase "origin/${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          cp app/build/outputs/apk/debug/app-debug.apk openkayak-debug.apk
+          git add openkayak-debug.apk
+
+          if git diff --cached --quiet; then
+            echo "APK unchanged"
+            exit 0
+          fi
+
+          git commit -m "chore: publish debug APK [skip ci]"
+
+          # The branch can move while Gradle is running. Retry safely without
+          # force-pushing if another commit lands between fetch and push.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+
+            echo "Push race detected, synchronizing attempt $attempt..."
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}"
+          done
+
+          echo "Unable to publish APK after 3 synchronized attempts."
+          exit 1
 
