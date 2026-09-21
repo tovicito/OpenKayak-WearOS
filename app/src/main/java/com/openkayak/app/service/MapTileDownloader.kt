@@ -50,6 +50,9 @@ class MapTileDownloader(private val context: Context) {
     @Volatile
     private var activeDownload: Job? = null
 
+    @Volatile
+    private var activeTask: CacheManager.CacheManagerTask? = null
+
     private var downloadMapView: MapView? = null
 
     /*
@@ -110,8 +113,12 @@ class MapTileDownloader(private val context: Context) {
                     }
                 )
 
-                // Keep this call on Main. CacheManager starts its own asynchronous work.
-                cacheManager.downloadAreaAsync(
+                // IMPORTANT: use the no-UI variant. The normal method installs
+                // osmdroid's ProgressDialog callback, which is inappropriate for
+                // a standalone Wear OS activity and can crash when its window
+                // lifecycle is not valid. CacheManager itself performs the work
+                // asynchronously on its own worker thread.
+                activeTask = cacheManager.downloadAreaAsyncNoUI(
                     appContext,
                     asturiasBoundingBox,
                     minZoom,
@@ -170,6 +177,7 @@ class MapTileDownloader(private val context: Context) {
                                     statusMessage = "Mapa de Asturias descargado"
                                 )
                             }
+                            activeTask = null
                             releaseMapView()
                         }
 
@@ -181,6 +189,7 @@ class MapTileDownloader(private val context: Context) {
                                     statusMessage = "La descarga terminó con " + errors + " errores"
                                 )
                             }
+                            activeTask = null
                             releaseMapView()
                         }
                     }
@@ -276,6 +285,13 @@ class MapTileDownloader(private val context: Context) {
     fun close() {
         activeDownload?.cancel()
         activeDownload = null
+        try {
+            activeTask?.cancel(true)
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not cancel map download task", error)
+        } finally {
+            activeTask = null
+        }
         releaseMapView()
         scope.cancel()
     }
