@@ -1820,7 +1820,6 @@ fun AmbientModeScreen(
     } else {
         0f
     }
-
     val heading = calculateAodHeading(trackPoints)
     val headingText = if (heading >= 0) heading.toInt().toString() + "°" else "--"
 
@@ -1832,22 +1831,18 @@ fun AmbientModeScreen(
         learnedCircuits = getSavedLearnedCircuits(context)
     }
 
-    /*
-     * The map is now the actual full-screen canvas. All information is drawn
-     * above it in opaque/semi-opaque rounded gray panels, rather than reserving
-     * vertical layout space for text. This prevents the previous wide-and-short
-     * map distortion and makes the AOD visually match the supplied reference.
-     */
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
+        // The map owns 100% of the display. Text never reserves layout space.
         AndroidView(
             factory = { ctx ->
                 MapView(ctx).apply {
                     setTileSource(TileSourceFactory.MAPNIK)
                     setMultiTouchControls(false)
+                    setTilesScaledToDpi(false)
                     controller.setZoom(16.5)
                     if (activePoint != null) {
                         controller.setCenter(
@@ -1863,34 +1858,36 @@ fun AmbientModeScreen(
 
                 for (circuit in learnedCircuits) {
                     if (circuit.outerPolyline.size >= 2) {
-                        val greenPolyline = Polyline().apply {
-                            setPoints(circuit.outerPolyline)
-                            outlinePaint.color = android.graphics.Color.GREEN
-                            outlinePaint.strokeWidth = 5f
-                            outlinePaint.isAntiAlias = true
-                        }
-                        mapView.overlays.add(greenPolyline)
+                        mapView.overlays.add(
+                            Polyline().apply {
+                                setPoints(circuit.outerPolyline)
+                                outlinePaint.color = android.graphics.Color.GREEN
+                                outlinePaint.strokeWidth = 5f
+                                outlinePaint.isAntiAlias = true
+                            }
+                        )
                     }
 
                     for (buoy in circuit.buoyPoints) {
-                        val buoyMarker = Marker(mapView).apply {
-                            position = buoy
-                            title = "Boya"
-                            val drawable = ContextCompat.getDrawable(
-                                context,
-                                android.R.drawable.ic_menu_mylocation
-                            )
-                            if (drawable != null) {
-                                val tinted =
-                                    androidx.core.graphics.drawable.DrawableCompat.wrap(drawable)
-                                androidx.core.graphics.drawable.DrawableCompat.setTint(
-                                    tinted,
-                                    android.graphics.Color.MAGENTA
+                        mapView.overlays.add(
+                            Marker(mapView).apply {
+                                position = buoy
+                                title = "Boya"
+                                val drawable = ContextCompat.getDrawable(
+                                    context,
+                                    android.R.drawable.ic_menu_mylocation
                                 )
-                                icon = tinted
+                                if (drawable != null) {
+                                    val tinted =
+                                        androidx.core.graphics.drawable.DrawableCompat.wrap(drawable)
+                                    androidx.core.graphics.drawable.DrawableCompat.setTint(
+                                        tinted,
+                                        android.graphics.Color.MAGENTA
+                                    )
+                                    icon = tinted
+                                }
                             }
-                        }
-                        mapView.overlays.add(buoyMarker)
+                        )
                     }
                 }
 
@@ -1898,21 +1895,23 @@ fun AmbientModeScreen(
                     GeoPoint(it.latitude, it.longitude)
                 }
                 if (points.size >= 2) {
-                    val redRoute = Polyline().apply {
-                        setPoints(points)
-                        outlinePaint.color = android.graphics.Color.RED
-                        outlinePaint.strokeWidth = 5f
-                        outlinePaint.isAntiAlias = true
-                    }
-                    mapView.overlays.add(redRoute)
+                    mapView.overlays.add(
+                        Polyline().apply {
+                            setPoints(points)
+                            outlinePaint.color = android.graphics.Color.RED
+                            outlinePaint.strokeWidth = 5f
+                            outlinePaint.isAntiAlias = true
+                        }
+                    )
                 }
 
                 if (activePoint != null) {
-                    val currentMarker = Marker(mapView).apply {
-                        position = GeoPoint(activePoint.latitude, activePoint.longitude)
-                        title = "Posición actual"
-                    }
-                    mapView.overlays.add(currentMarker)
+                    mapView.overlays.add(
+                        Marker(mapView).apply {
+                            position = GeoPoint(activePoint.latitude, activePoint.longitude)
+                            title = "Posición actual"
+                        }
+                    )
                     mapView.controller.setCenter(
                         GeoPoint(activePoint.latitude, activePoint.longitude)
                     )
@@ -1923,15 +1922,15 @@ fun AmbientModeScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Top information card. The map remains visible around it.
+        // Top information is a compact rounded gray tile over the map.
         AodPanel(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 6.dp),
+                .padding(top = 7.dp),
             content = {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 5.dp)
                 ) {
                     Text(
                         text = clockText,
@@ -1941,13 +1940,12 @@ fun AmbientModeScreen(
                         color = Color.White
                     )
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = "▣",
-                            fontSize = 11.sp,
-                            color = Color.LightGray
+                            fontSize = 10.sp,
+                            color = Color(0xFFE0E0E0)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
@@ -1957,7 +1955,7 @@ fun AmbientModeScreen(
                                 "--"
                             },
                             fontSize = 11.sp,
-                            color = Color.LightGray,
+                            color = Color(0xFFE0E0E0),
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -1965,103 +1963,108 @@ fun AmbientModeScreen(
             }
         )
 
-        // Small exit control, also isolated in a rounded gray panel.
-        Button(
-            onClick = onExitAmbient,
-            colors = ButtonDefaults.buttonColors(
-                backgroundColor = Color(0xCC777777)
-            ),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 8.dp, end = 7.dp)
-                .size(27.dp)
-                .clip(CircleShape)
-        ) {
-            Text(
-                text = "×",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.White
-            )
-        }
-
-        // Bottom center card overlays the map instead of shrinking it.
+        // Exit control gets its own gray rounded tile.
         AodPanel(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 7.dp),
+                .align(Alignment.TopEnd)
+                .padding(top = 7.dp, end = 7.dp),
             content = {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                Button(
+                    onClick = onExitAmbient,
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = Color.Transparent
+                    ),
+                    modifier = Modifier.size(29.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "◈",
-                            fontSize = 16.sp,
-                            color = Color(0xFF4AA8FF),
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Kayak",
-                            fontSize = 14.sp,
-                            color = Color.White,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
                     Text(
-                        text = formatTime(workoutState.elapsedTimeSeconds),
-                        fontSize = 23.sp,
-                        lineHeight = 24.sp,
+                        text = "×",
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White
                     )
-
-                    Text(
-                        text = "Tiempo total",
-                        fontSize = 8.sp,
-                        color = Color(0xFFD0D0D0)
-                    )
-
-                    Spacer(modifier = Modifier.height(3.dp))
-
-                    Row(
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AodMetric(
-                            value = String.format("%.1f", averageSpeed),
-                            label = "VEL. MEDIA"
-                        )
-                        AodMetric(
-                            value = String.format("%.1f", workoutState.distanceMeters / 1000f),
-                            label = "DISTANCIA",
-                            suffix = " km"
-                        )
-                        AodMetric(
-                            value = headingText,
-                            label = "RUMBO"
-                        )
-                    }
                 }
             }
         )
+
+        // Bottom data is split into independent gray rounded squares so the map
+        // remains visible between every value.
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            AodPanel(
+                content = {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "KAYAK",
+                            fontSize = 8.sp,
+                            color = Color(0xFF5DB2FF),
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = formatTime(workoutState.elapsedTimeSeconds),
+                            fontSize = 20.sp,
+                            lineHeight = 21.sp,
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = "TIEMPO",
+                            fontSize = 6.sp,
+                            color = Color(0xFFD0D0D0)
+                        )
+                    }
+                }
+            )
+
+            AodPanel(
+                content = {
+                    AodMetric(
+                        value = String.format("%.1f", averageSpeed),
+                        label = "VEL. MEDIA",
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 7.dp)
+                    )
+                }
+            )
+
+            AodPanel(
+                content = {
+                    AodMetric(
+                        value = String.format("%.1f", workoutState.distanceMeters / 1000f),
+                        label = "DISTANCIA",
+                        suffix = " km",
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 7.dp)
+                    )
+                }
+            )
+
+            AodPanel(
+                content = {
+                    AodMetric(
+                        value = headingText,
+                        label = "RUMBO",
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 7.dp)
+                    )
+                }
+            )
+        }
     }
 }
 
 @Composable
 private fun AodPanel(
-    modifier: Modifier,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(Color(0xCC666666))
     ) {
         content()
@@ -2072,16 +2075,17 @@ private fun AodPanel(
 private fun AodMetric(
     value: String,
     label: String,
-    suffix: String = ""
+    suffix: String = "",
+    modifier: Modifier = Modifier
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(76.dp)
+        modifier = modifier.width(67.dp)
     ) {
         Text(
             text = value + suffix,
-            fontSize = 14.sp,
-            lineHeight = 15.sp,
+            fontSize = 13.sp,
+            lineHeight = 14.sp,
             color = Color.White,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
@@ -2094,38 +2098,6 @@ private fun AodMetric(
             textAlign = TextAlign.Center
         )
     }
-}
-
-private fun readBatteryPercent(context: Context): Int {
-    return try {
-        val intent = context.registerReceiver(
-            null,
-            android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        )
-        val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = intent?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
-        if (level >= 0 && scale > 0) {
-            (level * 100f / scale).toInt().coerceIn(0, 100)
-        } else {
-            -1
-        }
-    } catch (_: Exception) {
-        -1
-    }
-}
-
-private fun calculateAodHeading(points: List<GpsPoint>): Double {
-    if (points.size < 2) return -1.0
-    val a = points[points.lastIndex - 1]
-    val b = points.last()
-    val lat1 = Math.toRadians(a.latitude)
-    val lat2 = Math.toRadians(b.latitude)
-    val dLon = Math.toRadians(b.longitude - a.longitude)
-    val y = Math.sin(dLon) * Math.cos(lat2)
-    val x = Math.cos(lat1) * Math.sin(lat2) -
-        Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)
-    if (x == 0.0 && y == 0.0) return -1.0
-    return (Math.toDegrees(Math.atan2(y, x)) + 360.0) % 360.0
 }
 
 private fun formatTime(seconds: Long): String {
