@@ -1941,7 +1941,7 @@ fun AmbientModeScreen(
                                     position = buoy
                                     title = "Boya"
                                     val drawable = ContextCompat.getDrawable(
-                                        ctx,
+                                        context,
                                         android.R.drawable.ic_menu_mylocation
                                     )
                                     if (drawable != null) {
