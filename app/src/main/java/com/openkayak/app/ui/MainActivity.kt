@@ -259,6 +259,7 @@ class MainActivity : ComponentActivity() {
             isBound = false
         }
         hrManager.disconnect()
+        mapDownloader.close()
     }
 
     private fun pointsToJson(points: List<GpsPoint>): String {
