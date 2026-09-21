@@ -1736,7 +1736,7 @@ fun SettingsScreen(
                             color = Color.Yellow
                         )
                         Text(
-                            text = "Descarga solo con Bluetooth",
+                            text = "Descarga con Wi-Fi o Internet compartido",
                             fontSize = 9.sp,
                             color = Color.Gray
                         )
@@ -1767,7 +1767,7 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .height(32.dp)
                             ) {
-                                Text("Descargar Asturias (BT)", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text("Descargar Asturias", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
