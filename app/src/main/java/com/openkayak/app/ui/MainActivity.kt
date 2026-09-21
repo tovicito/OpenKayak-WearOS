@@ -1030,7 +1030,7 @@ fun MapScreen(
     var learnedCircuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
 
     LaunchedEffect(workoutList) {
-        learnedCircuits = getLearnedCircuitsAsync(context, workoutList)
+        learnedCircuits = analyzeLearnedCircuits(context, workoutList).activeCircuits
     }
 
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
