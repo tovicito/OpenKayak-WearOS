@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.cachemanager.CacheManager
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.views.MapView
 
@@ -66,7 +67,7 @@ class MapTileDownloader(private val context: Context) {
 
         if (!isValidatedNetworkAvailable()) {
             _downloadState.value = DownloadState(
-                statusMessage = "Sin Internet válido. Conecta el reloj a Wi-Fi."
+                statusMessage = "Sin Internet validado. Conecta el reloj por Wi-Fi."
             )
             return
         }
@@ -86,6 +87,18 @@ class MapTileDownloader(private val context: Context) {
                     setMultiTouchControls(false)
                 }
                 downloadMapView = mapView
+
+                val tileSource = mapView.tileProvider.tileSource
+                if (tileSource is OnlineTileSourceBase &&
+                    !tileSource.tileSourcePolicy.acceptsBulkDownload()
+                ) {
+                    _downloadState.value = DownloadState(
+                        currentPhaseText = "No permitido",
+                        statusMessage = "Este mapa no permite descargas masivas offline."
+                    )
+                    releaseMapView()
+                    return@launch
+                }
 
                 val cacheManager = CacheManager(mapView)
                 val minZoom = 10
