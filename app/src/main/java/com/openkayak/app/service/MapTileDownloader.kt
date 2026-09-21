@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.cachemanager.CacheManager
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -27,7 +28,7 @@ data class DownloadState(
     val downloadedTiles: Int = 0,
     val totalTiles: Int = 0,
     val currentPhaseText: String = "",
-    val statusMessage: String = "Listo para descargar Asturias + Embalse de Trasona"
+    val statusMessage: String = "Listo para descargar Asturias (Z10-Z14)"
 )
 
 class MapTileDownloader(private val context: Context) {
@@ -37,18 +38,12 @@ class MapTileDownloader(private val context: Context) {
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
+    // Asturias Bounding Box: North = 43.60, East = -4.50, South = 42.85, West = -7.20
     private val asturiasBoundingBox = BoundingBox(
-        43.60, // Norte
-        -4.50, // Este
-        42.85, // Sur
-        -7.20  // Oeste
-    )
-
-    private val trasonaBoundingBox = BoundingBox(
-        43.56, // Norte
-        -5.87, // Este
-        43.51, // Sur
-        -5.93  // Oeste
+        43.60,
+        -4.50,
+        42.85,
+        -7.20
     )
 
     fun isNetworkAvailable(): Boolean {
@@ -60,174 +55,131 @@ class MapTileDownloader(private val context: Context) {
             val hasWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
             val hasCellular = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
             val hasBluetooth = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) == true
-            val hasCapability = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+            val hasInternet = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
 
             val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             val adapter = bluetoothManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
             @SuppressLint("MissingPermission")
             val isBtBonded = adapter != null && adapter.isEnabled && (adapter.bondedDevices?.isNotEmpty() == true)
 
-            return hasWifi || hasCellular || hasBluetooth || hasCapability || isBtBonded
+            return hasWifi || hasCellular || hasBluetooth || hasInternet || isBtBonded
         } catch (e: Exception) {
             Log.w(TAG, "Network check exception: ${e.localizedMessage}")
-            return true // Fallback to true so downloads are not blocked unnecessarily
+            return true
         }
     }
 
     fun downloadAsturiasOfflineMap() {
         if (!isNetworkAvailable()) {
             _downloadState.update {
-                it.copy(
-                    statusMessage = "Error: Conecta el reloj a Wi-Fi o Bluetooth para descargar."
-                )
+                it.copy(statusMessage = "Error: Conecta el reloj a Wi-Fi o Bluetooth para descargar.")
             }
             return
         }
+
         if (_downloadState.value.isDownloading) return
 
         _downloadState.update {
             DownloadState(
                 isDownloading = true,
-                statusMessage = "Calculando teselas de Asturias y Trasona..."
+                statusMessage = "Calculando teselas de Asturias Z10-Z14..."
             )
         }
 
         scope.launch {
-            try {
-                val osmdroidDir = java.io.File(context.filesDir, "osmdroid")
-                val tilesDir = java.io.File(osmdroidDir, "tiles")
-                if (!tilesDir.exists()) tilesDir.mkdirs()
+            withContext(Dispatchers.IO) {
+                try {
+                    val osmdroidDir = java.io.File(context.filesDir, "osmdroid")
+                    val tilesDir = java.io.File(osmdroidDir, "tiles")
+                    if (!tilesDir.exists()) tilesDir.mkdirs()
 
-                Configuration.getInstance().osmdroidBasePath = osmdroidDir
-                Configuration.getInstance().osmdroidTileCache = tilesDir
-                Configuration.getInstance().userAgentValue = context.packageName
+                    Configuration.getInstance().osmdroidBasePath = osmdroidDir
+                    Configuration.getInstance().osmdroidTileCache = tilesDir
+                    Configuration.getInstance().userAgentValue = context.packageName
 
-                val (cacheManager, tilesAsturias, tilesTrasona) = run {
-                    val mapView = MapView(context).apply {
-                        setTileSource(TileSourceFactory.MAPNIK)
+                    val mapView = withContext(Dispatchers.Main) {
+                        MapView(context).apply {
+                            setTileSource(TileSourceFactory.MAPNIK)
+                        }
                     }
-                    val cm = CacheManager(mapView)
-                    val tAst = try { cm.possibleTilesInArea(asturiasBoundingBox, 10, 12) } catch (e: Exception) { 150 }
-                    val tTra = try { cm.possibleTilesInArea(trasonaBoundingBox, 13, 14) } catch (e: Exception) { 100 }
-                    Triple(cm, tAst, tTra)
-                }
-                val totalCombinedTiles = tilesAsturias + tilesTrasona
 
-                _downloadState.update {
-                    it.copy(
-                        totalTiles = totalCombinedTiles,
-                        currentPhaseText = "Fase 1/2: Asturias Z10-Z14 ($tilesAsturias teselas)",
-                        statusMessage = "Iniciando Fase 1: Asturias Z10-Z14..."
-                    )
-                }
+                    val cacheManager = CacheManager(mapView)
+                    val minZoom = 10
+                    val maxZoom = 14
 
-                cacheManager.downloadAreaAsync(
-                    context,
-                    asturiasBoundingBox,
-                    10,
-                    12,
-                    object : CacheManager.CacheManagerCallback {
-                        override fun onTaskComplete() {
-                            _downloadState.update {
-                                it.copy(
-                                    currentPhaseText = "Fase 2/2: Embalse de Trasona Z13-Z14 ($tilesTrasona teselas)",
-                                    statusMessage = "Iniciando Fase 2: Trasona Z13-Z14..."
-                                )
-                            }
+                    val totalTiles = try {
+                        cacheManager.possibleTilesInArea(asturiasBoundingBox, minZoom, maxZoom)
+                    } catch (e: Exception) {
+                        250
+                    }
 
-                            cacheManager.downloadAreaAsync(
-                                context,
-                                trasonaBoundingBox,
-                                13,
-                                14,
-                                object : CacheManager.CacheManagerCallback {
-                                    override fun onTaskComplete() {
-                                        _downloadState.update {
-                                            DownloadState(
-                                                isDownloading = false,
-                                                progressPercent = 100,
-                                                downloadedTiles = totalCombinedTiles,
-                                                totalTiles = totalCombinedTiles,
-                                                currentPhaseText = "Completado",
-                                                statusMessage = "¡Mapa de Asturias y Trasona completado!"
-                                            )
-                                        }
-                                    }
+                    _downloadState.update {
+                        it.copy(
+                            totalTiles = totalTiles,
+                            currentPhaseText = "Asturias (Z$minZoom-Z$maxZoom)",
+                            statusMessage = "Iniciando descarga de $totalTiles teselas..."
+                        )
+                    }
 
-                                    override fun onTaskFailed(errors: Int) {
-                                        _downloadState.update {
-                                            it.copy(
-                                                isDownloading = false,
-                                                statusMessage = "Descarga de Trasona completada con $errors aviso(s)."
-                                            )
-                                        }
-                                    }
-
-                                    override fun updateProgress(
-                                        progress: Int,
-                                        currentZoomLevel: Int,
-                                        zoomMin: Int,
-                                        zoomMax: Int
-                                    ) {
-                                        val totalDone = tilesAsturias + progress
-                                        val percent = if (totalCombinedTiles > 0) {
-                                            ((totalDone.toFloat() / totalCombinedTiles) * 100).toInt()
-                                        } else 0
-
-                                        _downloadState.update {
-                                            it.copy(
-                                                downloadedTiles = totalDone,
-                                                progressPercent = percent.coerceIn(0, 100),
-                                                statusMessage = "Trasona Z15-Z16: $progress/$tilesTrasona ($percent%)"
-                                            )
-                                        }
-                                    }
-
-                                    override fun downloadStarted() {}
-                                    override fun setPossibleTilesInArea(total: Int) {}
+                    cacheManager.downloadAreaAsync(
+                        context,
+                        asturiasBoundingBox,
+                        minZoom,
+                        maxZoom,
+                        object : CacheManager.CacheManagerCallback {
+                            override fun onTaskComplete() {
+                                _downloadState.update {
+                                    DownloadState(
+                                        isDownloading = false,
+                                        progressPercent = 100,
+                                        downloadedTiles = totalTiles,
+                                        totalTiles = totalTiles,
+                                        currentPhaseText = "Completado",
+                                        statusMessage = "¡Mapa de Asturias (Z10-Z14) descargado con éxito!"
+                                    )
                                 }
-                            )
-                        }
-
-                        override fun onTaskFailed(errors: Int) {
-                            _downloadState.update {
-                                it.copy(
-                                    isDownloading = false,
-                                    statusMessage = "Descarga de Asturias completada con $errors aviso(s)."
-                                )
                             }
-                        }
 
-                        override fun updateProgress(
-                            progress: Int,
-                            currentZoomLevel: Int,
-                            zoomMin: Int,
-                            zoomMax: Int
-                        ) {
-                            val percent = if (totalCombinedTiles > 0) {
-                                ((progress.toFloat() / totalCombinedTiles) * 100).toInt()
-                            } else 0
-
-                            _downloadState.update {
-                                it.copy(
-                                    downloadedTiles = progress,
-                                    progressPercent = percent.coerceIn(0, 100),
-                                    statusMessage = "Asturias Z10-Z14: $progress/$tilesAsturias ($percent%)"
-                                )
+                            override fun onTaskFailed(errors: Int) {
+                                _downloadState.update {
+                                    DownloadState(
+                                        isDownloading = false,
+                                        statusMessage = "Descarga de Asturias finalizada con $errors avisos."
+                                    )
+                                }
                             }
-                        }
 
-                        override fun downloadStarted() {}
-                        override fun setPossibleTilesInArea(total: Int) {}
-                    }
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "Download Exception: ${e.localizedMessage}")
-                _downloadState.update {
-                    DownloadState(
-                        isDownloading = false,
-                        statusMessage = "Error en descarga: ${e.localizedMessage}"
+                            override fun updateProgress(
+                                progress: Int,
+                                currentZoomLevel: Int,
+                                zoomMin: Int,
+                                zoomMax: Int
+                            ) {
+                                val percent = if (totalTiles > 0) {
+                                    ((progress.toFloat() / totalTiles) * 100).toInt().coerceIn(0, 100)
+                                } else 0
+
+                                _downloadState.update {
+                                    it.copy(
+                                        downloadedTiles = progress,
+                                        progressPercent = percent,
+                                        statusMessage = "Descargando Z$currentZoomLevel: $progress/$totalTiles ($percent%)"
+                                    )
+                                }
+                            }
+
+                            override fun downloadStarted() {}
+                            override fun setPossibleTilesInArea(total: Int) {}
+                        }
                     )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Download Exception: ${e.localizedMessage}")
+                    _downloadState.update {
+                        DownloadState(
+                            isDownloading = false,
+                            statusMessage = "Error en la descarga: ${e.localizedMessage}"
+                        )
+                    }
                 }
             }
         }
