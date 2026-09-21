@@ -389,7 +389,7 @@ private fun cleanupExpiredDeleted(circuits: MutableList<LearnedCircuit>, now: Lo
 suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEntity>): CircuitAnalysisResult =
     withContext(Dispatchers.IO) {
         val saved = cleanupExpiredDeleted(loadSavedCircuits(context), System.currentTimeMillis())
-        val workouts = dbWorkouts.mapNotNull { workout ->
+        val workouts: List<List<GpsPoint>> = dbWorkouts.mapNotNull { workout ->
             parseJsonRoute(workout.routeGpsJson).takeIf { it.size >= 7 }
         }
         if (workouts.isEmpty()) {
@@ -411,7 +411,10 @@ suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEnt
         val generated = mutableListOf<LearnedCircuit>()
 
         for (candidate in candidates) {
-            val buoys = candidate.buoyIds.map { validClusters[it].center() }
+            val buoys = candidate.buoyIds.map { cluster ->
+                val p = validClusters[cluster].center()
+                GeoPoint(p.latitude, p.longitude)
+            }
             val diameter = buoys.maxOfOrNull { a ->
                 buoys.maxOfOrNull { b ->
                     distanceBetweenMeters(
