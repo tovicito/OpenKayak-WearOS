@@ -1,15 +1,16 @@
 package com.openkayak.app.service
 
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,17 +29,17 @@ data class DownloadState(
     val downloadedTiles: Int = 0,
     val totalTiles: Int = 0,
     val currentPhaseText: String = "",
-    val statusMessage: String = "Listo para descargar Asturias (Z10-Z14)"
+    val statusMessage: String = "Listo para descargar el mapa de Asturias"
 )
 
 class MapTileDownloader(private val context: Context) {
 
+    private val appContext = context.applicationContext
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     private val _downloadState = MutableStateFlow(DownloadState())
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
 
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
-
-    // Asturias Bounding Box: North = 43.60, East = -4.50, South = 42.85, West = -7.20
     private val asturiasBoundingBox = BoundingBox(
         43.60,
         -4.50,
@@ -46,143 +47,237 @@ class MapTileDownloader(private val context: Context) {
         -7.20
     )
 
-    fun isNetworkAvailable(): Boolean {
-        try {
-            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            val activeNetwork = connectivityManager?.activeNetwork
-            val capabilities = connectivityManager?.getNetworkCapabilities(activeNetwork)
+    @Volatile
+    private var activeDownload: Job? = null
 
-            val hasWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            val hasCellular = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
-            val hasBluetooth = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) == true
-            val hasInternet = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+    private var downloadMapView: MapView? = null
 
-            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-            val adapter = bluetoothManager?.adapter ?: @Suppress("DEPRECATION") BluetoothAdapter.getDefaultAdapter()
-            @SuppressLint("MissingPermission")
-            val isBtBonded = adapter != null && adapter.isEnabled && (adapter.bondedDevices?.isNotEmpty() == true)
-
-            return hasWifi || hasCellular || hasBluetooth || hasInternet || isBtBonded
-        } catch (e: Exception) {
-            Log.w(TAG, "Network check exception: ${e.localizedMessage}")
-            return true
-        }
-    }
-
+    /*
+     * CacheManager is tied to MapView and its tile provider.
+     * MapView is a UI object, so it must be created and touched on Main.
+     * The previous implementation created it on Main and then moved the same
+     * object into Dispatchers.IO, causing the thread/main crash.
+     */
     fun downloadAsturiasOfflineMap() {
-        if (!isNetworkAvailable()) {
-            _downloadState.update {
-                it.copy(statusMessage = "Error: Conecta el reloj a Wi-Fi o Bluetooth para descargar.")
-            }
+        if (activeDownload?.isActive == true || _downloadState.value.isDownloading) return
+
+        if (!isValidatedNetworkAvailable()) {
+            _downloadState.value = DownloadState(
+                statusMessage = "Sin Internet válido. Conecta el reloj a Wi-Fi."
+            )
             return
         }
 
-        if (_downloadState.value.isDownloading) return
-
-        _downloadState.update {
-            DownloadState(
+        activeDownload = scope.launch {
+            _downloadState.value = DownloadState(
                 isDownloading = true,
-                statusMessage = "Calculando teselas de Asturias Z10-Z14..."
+                currentPhaseText = "Preparando",
+                statusMessage = "Preparando mapa offline de Asturias..."
             )
-        }
 
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                try {
-                    val osmdroidDir = java.io.File(context.filesDir, "osmdroid")
-                    val tilesDir = java.io.File(osmdroidDir, "tiles")
-                    if (!tilesDir.exists()) tilesDir.mkdirs()
+            try {
+                configureOsmdroidOnMainThread()
 
-                    Configuration.getInstance().osmdroidBasePath = osmdroidDir
-                    Configuration.getInstance().osmdroidTileCache = tilesDir
-                    Configuration.getInstance().userAgentValue = context.packageName
+                val mapView = MapView(appContext).apply {
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setMultiTouchControls(false)
+                }
+                downloadMapView = mapView
 
-                    val mapView = withContext(Dispatchers.Main) {
-                        MapView(context).apply {
-                            setTileSource(TileSourceFactory.MAPNIK)
-                        }
-                    }
+                val cacheManager = CacheManager(mapView)
+                val minZoom = 10
+                val maxZoom = 14
 
-                    val cacheManager = CacheManager(mapView)
-                    val minZoom = 10
-                    val maxZoom = 14
-
-                    val totalTiles = try {
-                        cacheManager.possibleTilesInArea(asturiasBoundingBox, minZoom, maxZoom)
-                    } catch (e: Exception) {
-                        250
-                    }
-
-                    _downloadState.update {
-                        it.copy(
-                            totalTiles = totalTiles,
-                            currentPhaseText = "Asturias (Z$minZoom-Z$maxZoom)",
-                            statusMessage = "Iniciando descarga de $totalTiles teselas..."
-                        )
-                    }
-
-                    cacheManager.downloadAreaAsync(
-                        context,
+                val totalTiles = runCatching {
+                    cacheManager.possibleTilesInArea(
                         asturiasBoundingBox,
                         minZoom,
-                        maxZoom,
-                        object : CacheManager.CacheManagerCallback {
-                            override fun onTaskComplete() {
-                                _downloadState.update {
-                                    DownloadState(
-                                        isDownloading = false,
-                                        progressPercent = 100,
-                                        downloadedTiles = totalTiles,
-                                        totalTiles = totalTiles,
-                                        currentPhaseText = "Completado",
-                                        statusMessage = "¡Mapa de Asturias (Z10-Z14) descargado con éxito!"
-                                    )
-                                }
-                            }
-
-                            override fun onTaskFailed(errors: Int) {
-                                _downloadState.update {
-                                    DownloadState(
-                                        isDownloading = false,
-                                        statusMessage = "Descarga de Asturias finalizada con $errors avisos."
-                                    )
-                                }
-                            }
-
-                            override fun updateProgress(
-                                progress: Int,
-                                currentZoomLevel: Int,
-                                zoomMin: Int,
-                                zoomMax: Int
-                            ) {
-                                val percent = if (totalTiles > 0) {
-                                    ((progress.toFloat() / totalTiles) * 100).toInt().coerceIn(0, 100)
-                                } else 0
-
-                                _downloadState.update {
-                                    it.copy(
-                                        downloadedTiles = progress,
-                                        progressPercent = percent,
-                                        statusMessage = "Descargando Z$currentZoomLevel: $progress/$totalTiles ($percent%)"
-                                    )
-                                }
-                            }
-
-                            override fun downloadStarted() {}
-                            override fun setPossibleTilesInArea(total: Int) {}
-                        }
+                        maxZoom
                     )
-                } catch (e: Exception) {
-                    Log.e(TAG, "Download Exception: ${e.localizedMessage}")
-                    _downloadState.update {
-                        DownloadState(
-                            isDownloading = false,
-                            statusMessage = "Error en la descarga: ${e.localizedMessage}"
-                        )
-                    }
+                }.getOrElse { error ->
+                    Log.w(TAG, "Could not calculate tile count", error)
+                    0
                 }
+
+                _downloadState.value = DownloadState(
+                    isDownloading = true,
+                    totalTiles = totalTiles,
+                    currentPhaseText = "Asturias Z" + minZoom + "-Z" + maxZoom,
+                    statusMessage = if (totalTiles > 0) {
+                        "Preparando " + totalTiles + " teselas..."
+                    } else {
+                        "Preparando descarga..."
+                    }
+                )
+
+                // Keep this call on Main. CacheManager starts its own asynchronous work.
+                cacheManager.downloadAreaAsync(
+                    appContext,
+                    asturiasBoundingBox,
+                    minZoom,
+                    maxZoom,
+                    object : CacheManager.CacheManagerCallback {
+                        override fun downloadStarted() {
+                            postState {
+                                it.copy(
+                                    isDownloading = true,
+                                    currentPhaseText = "Descargando"
+                                )
+                            }
+                        }
+
+                        override fun setPossibleTilesInArea(total: Int) {
+                            postState {
+                                it.copy(
+                                    totalTiles = total,
+                                    currentPhaseText = "Asturias Z" + minZoom + "-Z" + maxZoom
+                                )
+                            }
+                        }
+
+                        override fun updateProgress(
+                            progress: Int,
+                            currentZoomLevel: Int,
+                            zoomMin: Int,
+                            zoomMax: Int
+                        ) {
+                            val knownTotal = _downloadState.value.totalTiles
+                            val percent = if (knownTotal > 0) {
+                                (progress * 100L / knownTotal).toInt().coerceIn(0, 100)
+                            } else {
+                                0
+                            }
+
+                            postState {
+                                it.copy(
+                                    isDownloading = true,
+                                    downloadedTiles = progress,
+                                    progressPercent = percent,
+                                    currentPhaseText = "Zoom " + currentZoomLevel + "/" + zoomMax,
+                                    statusMessage = "Descargando Z" + currentZoomLevel +
+                                        ": " + progress + "/" + knownTotal + " (" + percent + "%)"
+                                )
+                            }
+                        }
+
+                        override fun onTaskComplete() {
+                            postState {
+                                it.copy(
+                                    isDownloading = false,
+                                    progressPercent = 100,
+                                    downloadedTiles = it.totalTiles,
+                                    currentPhaseText = "Completado",
+                                    statusMessage = "Mapa de Asturias descargado"
+                                )
+                            }
+                            releaseMapView()
+                        }
+
+                        override fun onTaskFailed(errors: Int) {
+                            postState {
+                                it.copy(
+                                    isDownloading = false,
+                                    currentPhaseText = "Error",
+                                    statusMessage = "La descarga terminó con " + errors + " errores"
+                                )
+                            }
+                            releaseMapView()
+                        }
+                    }
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                _downloadState.value = DownloadState(statusMessage = "Descarga cancelada")
+                releaseMapView()
+                throw cancelled
+            } catch (error: Exception) {
+                Log.e(TAG, "Offline map download failed", error)
+                _downloadState.value = DownloadState(
+                    statusMessage = "Error del mapa: " + (error.localizedMessage ?: "desconocido")
+                )
+                releaseMapView()
             }
         }
+    }
+
+    private suspend fun configureOsmdroidOnMainThread() {
+        withContext(Dispatchers.Main.immediate) {
+            val config = Configuration.getInstance()
+            val base = java.io.File(appContext.filesDir, "osmdroid")
+            val tiles = java.io.File(base, "tiles")
+            if (!tiles.exists() && !tiles.mkdirs()) {
+                Log.w(TAG, "Could not create tile cache directory: " + tiles.absolutePath)
+            }
+            config.osmdroidBasePath = base
+            config.osmdroidTileCache = tiles
+            config.userAgentValue = appContext.packageName
+        }
+    }
+
+    private fun postState(transform: (DownloadState) -> DownloadState) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            _downloadState.update(transform)
+        } else {
+            scope.launch {
+                _downloadState.update(transform)
+            }
+        }
+    }
+
+    private fun releaseMapView() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            scope.launch { releaseMapView() }
+            return
+        }
+        try {
+            downloadMapView?.onDetach()
+        } catch (error: Exception) {
+            Log.w(TAG, "MapView detach warning", error)
+        } finally {
+            downloadMapView = null
+            activeDownload = null
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun isValidatedNetworkAvailable(): Boolean {
+        return try {
+            val connectivity = appContext.getSystemService(Context.CONNECTIVITY_SERVICE)
+                as? ConnectivityManager ?: return false
+
+            val active = connectivity.activeNetwork ?: return false
+            val capabilities = connectivity.getNetworkCapabilities(active) ?: return false
+
+            val hasInternet = capabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_INTERNET
+            )
+            val isValidated = capabilities.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_VALIDATED
+            )
+            val supportedTransport =
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH)
+
+            hasInternet && isValidated && supportedTransport
+        } catch (error: Exception) {
+            Log.w(TAG, "Network validation failed", error)
+            false
+        }
+    }
+
+    fun clearState() {
+        scope.launch {
+            if (activeDownload?.isActive == true) return@launch
+            _downloadState.value = DownloadState()
+        }
+    }
+
+    fun close() {
+        activeDownload?.cancel()
+        activeDownload = null
+        releaseMapView()
+        scope.cancel()
     }
 
     companion object {
