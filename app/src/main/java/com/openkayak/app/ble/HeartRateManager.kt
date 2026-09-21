@@ -67,6 +67,10 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     private var targetDeviceAddress: String? = null
     private var isAutoReconnectEnabled = false
 
+    // Detect a connected-but-stalled HR GATT connection.
+    private var lastBleMeasurementAtMs: Long = 0L
+    private var bleMeasurementWatchdogJob: Job? = null
+
     private val scope = CoroutineScope(Dispatchers.Default + Job())
     private var reconnectJob: Job? = null
     private var lastPulseResetJob: Job? = null
@@ -126,7 +130,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                             preferredDeviceAddress = addr
                         )
                     }
-                    bluetoothGatt?.discoverServices()
+                    if (bluetoothGatt == gatt && gatt != null) gatt.discoverServices()
                 }
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -145,6 +149,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                     if (bluetoothGatt == gatt) {
                         bluetoothGatt = null
                     }
+                    lastBleMeasurementAtMs = 0L
+                    bleMeasurementWatchdogJob?.cancel()
+                    bleMeasurementWatchdogJob = null
 
                     // Fall back to internal watch HR sensor immediately when BLE disconnects
                     startWatchHrSensor()
@@ -158,35 +165,55 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS && gatt != null) {
-                val service = gatt.getService(HEART_RATE_SERVICE_UUID)
-                val characteristic = service?.getCharacteristic(HEART_RATE_MEASUREMENT_CHAR_UUID)
-
-                if (characteristic != null) {
-                    val notifySet = gatt.setCharacteristicNotification(characteristic, true)
-                    Log.d(TAG, "setCharacteristicNotification success: $notifySet")
-
-                    val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
-                    if (descriptor != null) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            gatt.writeDescriptor(
-                                descriptor,
-                                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            )
-                        } else {
-                            @Suppress("DEPRECATION")
-                            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            @Suppress("DEPRECATION")
-                            gatt.writeDescriptor(descriptor)
-                        }
-                    } else {
-                        Log.w(TAG, "CCCD Descriptor 0x2902 is null!")
-                    }
-                } else {
-                    Log.w(TAG, "HR Measurement Characteristic 0x2A37 not found")
-                }
-            } else {
+            if (gatt == null || gatt != bluetoothGatt) {
+                Log.w(TAG, "Ignoring services from stale GATT connection")
+                return
+            }
+            if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.e(TAG, "onServicesDiscovered failed with status: $status")
+                return
+            }
+
+            val service = gatt.getService(HEART_RATE_SERVICE_UUID)
+            val characteristic = service?.getCharacteristic(HEART_RATE_MEASUREMENT_CHAR_UUID)
+            if (service == null || characteristic == null) {
+                Log.e(TAG, "HR service/measurement characteristic not found")
+                return
+            }
+
+            val supportsNotify = (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0
+            val supportsIndicate = (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
+            if (!supportsNotify && !supportsIndicate) {
+                Log.e(TAG, "HR characteristic has no NOTIFY/INDICATE property")
+                return
+            }
+
+            val localEnabled = gatt.setCharacteristicNotification(characteristic, true)
+            Log.d(TAG, "Local HR notification registration=$localEnabled")
+            if (!localEnabled) return
+
+            val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
+            if (descriptor == null) {
+                Log.e(TAG, "CCCD Descriptor 0x2902 is null")
+                return
+            }
+
+            _hrState.update { it.copy(hrNotificationsEnabled = false) }
+            val cccdValue = if (supportsNotify) {
+                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+            } else {
+                BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val accepted = gatt.writeDescriptor(descriptor, cccdValue)
+                Log.d(TAG, "CCCD write requested: $accepted")
+            } else {
+                @Suppress("DEPRECATION")
+                descriptor.value = cccdValue
+                @Suppress("DEPRECATION")
+                val accepted = gatt.writeDescriptor(descriptor)
+                Log.d(TAG, "CCCD write requested: $accepted")
             }
         }
 
@@ -195,9 +222,14 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             descriptor: BluetoothGattDescriptor?,
             status: Int
         ) {
+            if (gatt == null || gatt != bluetoothGatt) return
+            if (descriptor?.uuid != CLIENT_CHARACTERISTIC_CONFIG_UUID) return
+
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.d(TAG, "CCCD Descriptor written successfully! HR notifications active.")
+                lastBleMeasurementAtMs = System.currentTimeMillis()
                 _hrState.update { it.copy(hrNotificationsEnabled = true) }
+                startBleMeasurementWatchdog(gatt)
             } else {
                 Log.e(TAG, "Failed writing CCCD descriptor. Status: $status")
                 _hrState.update { it.copy(hrNotificationsEnabled = false) }
@@ -209,12 +241,12 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             gatt: BluetoothGatt?,
             characteristic: BluetoothGattCharacteristic?
         ) {
+            if (gatt == null || gatt != bluetoothGatt) return
+            if (characteristic?.uuid != HEART_RATE_MEASUREMENT_CHAR_UUID) return
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                 @Suppress("DEPRECATION")
-                val data = characteristic?.value
-                if (data != null) {
-                    parseHeartRateMeasurement(data.copyOf())
-                }
+                val data = characteristic.value?.copyOf() ?: return
+                parseHeartRateMeasurement(data)
             }
         }
 
@@ -223,6 +255,8 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
+            if (gatt != bluetoothGatt) return
+            if (characteristic.uuid != HEART_RATE_MEASUREMENT_CHAR_UUID) return
             parseHeartRateMeasurement(value.copyOf())
         }
     }
@@ -244,6 +278,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         }
 
         if (bpm in 30..240) {
+            lastBleMeasurementAtMs = System.currentTimeMillis()
             stopWatchHrSensor()
             _hrState.update {
                 it.copy(
@@ -256,6 +291,45 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             lastPulseResetJob = scope.launch {
                 delay(200L)
                 _hrState.update { it.copy(isPulseActive = false) }
+            }
+        }
+    }
+
+    private fun startBleMeasurementWatchdog(gatt: BluetoothGatt) {
+        bleMeasurementWatchdogJob?.cancel()
+        bleMeasurementWatchdogJob = scope.launch {
+            while (bluetoothGatt == gatt &&
+                _hrState.value.connectionState == BleConnectionState.CONNECTED) {
+                delay(BLE_MEASUREMENT_WATCHDOG_INTERVAL_MS)
+
+                if (bluetoothGatt != gatt ||
+                    _hrState.value.connectionState != BleConnectionState.CONNECTED) {
+                    break
+                }
+
+                val age = System.currentTimeMillis() - lastBleMeasurementAtMs
+                if (age >= BLE_MEASUREMENT_TIMEOUT_MS) {
+                    Log.w(TAG, "No BLE HR measurement for " + age + "ms; reconnecting GATT")
+                    try {
+                        gatt.disconnect()
+                        gatt.close()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error resetting stalled GATT: " + e.localizedMessage)
+                    }
+                    if (bluetoothGatt == gatt) bluetoothGatt = null
+                    lastBleMeasurementAtMs = 0L
+                    _hrState.update {
+                        it.copy(
+                            connectionState = BleConnectionState.DISCONNECTED,
+                            heartRateBpm = 0,
+                            hrNotificationsEnabled = false
+                        )
+                    }
+                    bleMeasurementWatchdogJob = null
+                    startWatchHrSensor()
+                    if (isAutoReconnectEnabled && targetDeviceAddress != null) scheduleReconnect()
+                    break
+                }
             }
         }
     }
@@ -406,6 +480,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         } catch (e: Exception) {
             Log.w(TAG, "Error closing previous GATT: ${e.localizedMessage}")
         }
+        bleMeasurementWatchdogJob?.cancel()
+        bleMeasurementWatchdogJob = null
+        lastBleMeasurementAtMs = 0L
         bluetoothGatt = null
         try {
             bluetoothGatt = device.connectGatt(context, false, gattCallback)
@@ -421,6 +498,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         isAutoReconnectEnabled = false
         reconnectJob?.cancel()
         stopScan()
+        bleMeasurementWatchdogJob?.cancel()
+        bleMeasurementWatchdogJob = null
+        lastBleMeasurementAtMs = 0L
         try {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
@@ -465,6 +545,8 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     companion object {
         private const val TAG = "HeartRateManager"
         private const val KEY_PREFERRED_ADDRESS = "preferred_ble_hr_address"
+        private const val BLE_MEASUREMENT_WATCHDOG_INTERVAL_MS = 3000L
+        private const val BLE_MEASUREMENT_TIMEOUT_MS = 8000L
 
         val HEART_RATE_SERVICE_UUID: UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
         val HEART_RATE_MEASUREMENT_CHAR_UUID: UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
