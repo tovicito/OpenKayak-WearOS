@@ -68,6 +68,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     private var isAutoReconnectEnabled = false
 
     // Detect a connected-but-stalled HR GATT connection.
+    @Volatile
     private var lastBleMeasurementAtMs: Long = 0L
     private var bleMeasurementWatchdogJob: Job? = null
 
@@ -130,7 +131,17 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                             preferredDeviceAddress = addr
                         )
                     }
-                    if (bluetoothGatt == gatt && gatt != null) gatt.discoverServices()
+                    if (bluetoothGatt == gatt && gatt != null) {
+                        try {
+                            val accepted = gatt.requestConnectionPriority(
+                                BluetoothGatt.CONNECTION_PRIORITY_HIGH
+                            )
+                            Log.d(TAG, "GATT high-priority connection request=$accepted")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "GATT connection-priority request failed: ${e.localizedMessage}")
+                        }
+                        gatt.discoverServices()
+                    }
                 }
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -545,8 +556,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     companion object {
         private const val TAG = "HeartRateManager"
         private const val KEY_PREFERRED_ADDRESS = "preferred_ble_hr_address"
-        private const val BLE_MEASUREMENT_WATCHDOG_INTERVAL_MS = 3000L
-        private const val BLE_MEASUREMENT_TIMEOUT_MS = 8000L
+        // The watchdog must not itself create a 3-second cadence in the HR path.
+        private const val BLE_MEASUREMENT_WATCHDOG_INTERVAL_MS = 2000L
+        private const val BLE_MEASUREMENT_TIMEOUT_MS = 15000L
 
         val HEART_RATE_SERVICE_UUID: UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
         val HEART_RATE_MEASUREMENT_CHAR_UUID: UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
