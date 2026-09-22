@@ -56,6 +56,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -1143,6 +1145,7 @@ fun MapScreen(
                 .padding(start = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Navegar a la pantalla anterior" }
         ) {
             Text("<", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1156,6 +1159,7 @@ fun MapScreen(
                 .padding(end = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Navegar a la pantalla siguiente" }
         ) {
             Text(">", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1216,6 +1220,7 @@ fun HistoryScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar mapa de entrenamiento" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1296,7 +1301,9 @@ fun HistoryScreen() {
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar entrenamiento" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -1390,6 +1397,7 @@ fun CircuitsScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar vista previa del recorrido" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1460,7 +1468,9 @@ fun CircuitsScreen() {
                                         circuits = circuits.filterNot { it.id == circuit.id }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Borrar recorrido" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -1994,6 +2004,7 @@ fun AmbientModeScreen(
                 .padding(top = 10.dp, end = 10.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Salir de modo ambiente" }
         ) {
             Text(
                 text = "X",
