@@ -137,7 +137,7 @@ private fun extractTurnObservations(workouts: List<List<GpsPoint>>): List<TurnOb
             val angle = turnAngleFromWindow(samplePoints, i)
             val point = samples[i].second
             if (angle < MIN_TURN_ANGLE) continue
-            if (lastAccepted != null && distanceBetweenMeters(lastAccepted!!, point) < 45f) continue
+            if (lastAccepted != null && distanceBetweenMeters(lastAccepted, point) < 45f) continue
             turns += TurnObservation(workoutIndex, samples[i].first, point)
             lastAccepted = point
         }
@@ -434,7 +434,7 @@ suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEnt
             val previous = saved.firstOrNull { it.signature == candidate.signature }
             generated += LearnedCircuit(
                 id = previous?.id ?: stableCircuitId(candidate.signature),
-                name = previous?.name ?: "Circuito \${generated.size + 1} (\${buoys.size} boyas)",
+                name = previous?.name ?: "Circuito ${generated.size + 1} (${buoys.size} boyas)",
                 startLat = buoys.first().latitude,
                 startLon = buoys.first().longitude,
                 turnLat = buoys.first().latitude,
