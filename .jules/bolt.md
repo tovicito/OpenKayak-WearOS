@@ -1,0 +1,3 @@
+## 2025-05-18 - Circuit Learner Loop Allocation Bottleneck
+**Learning:** `analyzeLearnedCircuits` is executed after every workout completion, operating on all stored GPS track points. Inner loop operations in `extractTurnObservations` and candidate edge verification previously allocated duplicate `List` instances on every sample point iteration and re-scanned all workout sequences $O(Candidates \times TotalEdges)$.
+**Action:** Always check loop invariant mappings in spatial/track processing functions (`map` inside `for` loops) and precompute candidate lookup tables before filtering sequences in trajectory analysis code.
