@@ -90,8 +90,12 @@ fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double 
     return diff
 }
 
+private val distanceBuffer = object : ThreadLocal<FloatArray>() {
+    override fun initialValue(): FloatArray = FloatArray(1)
+}
+
 fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
-    val result = FloatArray(1)
+    val result = distanceBuffer.get() ?: FloatArray(1)
     Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, result)
     return result[0]
 }
@@ -131,13 +135,14 @@ private fun extractTurnObservations(workouts: List<List<GpsPoint>>): List<TurnOb
         val samples = sampled(points)
         if (samples.size < 7) continue
 
+        // Optimization: Map sample points once per workout instead of inside the sample point loop
+        val samplePoints = samples.map { it.second }
         var lastAccepted: GpsPoint? = null
         for (i in 2 until samples.lastIndex - 1) {
-            val samplePoints = samples.map { it.second }
             val angle = turnAngleFromWindow(samplePoints, i)
-            val point = samples[i].second
+            val point = samplePoints[i]
             if (angle < MIN_TURN_ANGLE) continue
-            if (lastAccepted != null && distanceBetweenMeters(lastAccepted!!, point) < 45f) continue
+            if (lastAccepted != null && distanceBetweenMeters(lastAccepted, point) < 45f) continue
             turns += TurnObservation(workoutIndex, samples[i].first, point)
             lastAccepted = point
         }
@@ -185,9 +190,22 @@ private fun buildWorkoutSequences(
     }
 }
 
+// Optimization: Find lexicographically smallest rotation directly without string conversions or sublist allocations
 private fun canonicalCycle(ids: List<Int>): Pair<String, List<Int>> {
-    val rotations = ids.indices.map { start -> ids.drop(start) + ids.take(start) }
-    val best = rotations.minWithOrNull(compareBy<List<Int>> { it.joinToString(",") }) ?: ids
+    val n = ids.size
+    if (n == 0) return "" to emptyList()
+    var bestIndex = 0
+    for (start in 1 until n) {
+        for (i in 0 until n) {
+            val a = ids[(start + i) % n]
+            val b = ids[(bestIndex + i) % n]
+            if (a != b) {
+                if (a < b) bestIndex = start
+                break
+            }
+        }
+    }
+    val best = List(n) { i -> ids[(bestIndex + i) % n] }
     return best.joinToString("-") to best
 }
 
@@ -205,9 +223,12 @@ private fun collectCycleCandidates(
                 if (sequence[end].buoyId != sequence[start].buoyId) continue
                 val body = sequence.subList(start, end)
                 if (body.size !in MIN_CIRCUIT_BUOYS..MAX_CIRCUIT_BUOYS) continue
-                if (body.map { it.buoyId }.toSet().size < MIN_CIRCUIT_BUOYS) continue
 
-                val (signature, canonicalIds) = canonicalCycle(body.map { it.buoyId })
+                // Optimization: Reuse mapped buoy ID list to avoid multiple mappings
+                val buoyIds = body.map { it.buoyId }
+                if (buoyIds.toSet().size < MIN_CIRCUIT_BUOYS) continue
+
+                val (signature, canonicalIds) = canonicalCycle(buoyIds)
                 if (seenKeys.add(signature)) {
                     grouped.getOrPut(signature) { mutableListOf() } += workoutIndex to (body + sequence[end])
                 }
@@ -222,16 +243,26 @@ private fun collectCycleCandidates(
     }
 }
 
-private fun cycleEdgeSupport(candidate: CycleCandidate, sequences: List<List<SequenceObservation>>): Boolean {
-    val edges = candidate.buoyIds.mapIndexed { i, id -> id to candidate.buoyIds[(i + 1) % candidate.buoyIds.size] }
-    val counts = edges.associateWith { 0 }.toMutableMap()
+// Optimization: Precompute edge frequencies once across all sequences to avoid O(Candidates * TotalEdges) scanning
+private fun buildEdgeCounts(sequences: List<List<SequenceObservation>>): Map<Pair<Int, Int>, Int> {
+    val counts = HashMap<Pair<Int, Int>, Int>()
     for (sequence in sequences) {
         for (i in 0 until sequence.lastIndex) {
             val edge = sequence[i].buoyId to sequence[i + 1].buoyId
-            if (edge in counts) counts[edge] = counts.getValue(edge) + 1
+            counts[edge] = (counts[edge] ?: 0) + 1
         }
     }
-    return counts.values.all { it >= MIN_BUOY_OCCURRENCES }
+    return counts
+}
+
+private fun cycleEdgeSupport(candidate: CycleCandidate, edgeCounts: Map<Pair<Int, Int>, Int>): Boolean {
+    val buoyIds = candidate.buoyIds
+    val size = buoyIds.size
+    for (i in 0 until size) {
+        val edge = buoyIds[i] to buoyIds[(i + 1) % size]
+        if ((edgeCounts[edge] ?: 0) < MIN_BUOY_OCCURRENCES) return false
+    }
+    return true
 }
 
 private fun meanPolyline(polylines: List<List<GeoPoint>>, targetSize: Int = 80): List<GeoPoint> {
@@ -406,7 +437,8 @@ suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEnt
         }
 
         val sequences = buildWorkoutSequences(validClusters, workouts.size)
-        val candidates = collectCycleCandidates(sequences).filter { cycleEdgeSupport(it, sequences) }
+        val edgeCounts = buildEdgeCounts(sequences)
+        val candidates = collectCycleCandidates(sequences).filter { cycleEdgeSupport(it, edgeCounts) }
         val now = System.currentTimeMillis()
         val generated = mutableListOf<LearnedCircuit>()
 
