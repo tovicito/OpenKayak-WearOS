@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -1479,7 +1479,7 @@ fun SettingsScreen(
     hrState: com.openkayak.app.ble.BleHeartRateState,
     mapDownloader: MapTileDownloader,
     downloadState: com.openkayak.app.service.DownloadState,
-    healthConnectManager: HealthConnectManager
+    @Suppress("UNUSED_PARAMETER") healthConnectManager: HealthConnectManager
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
