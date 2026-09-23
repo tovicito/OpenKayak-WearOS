@@ -99,7 +99,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             val preferred = _hrState.value.preferredDeviceAddress
 
             if (isHrDevice || (preferred != null && device.address.equals(preferred, ignoreCase = true))) {
-                Log.d(TAG, "Found Valid HR Device: $name [${device.address}]")
+                Log.d(TAG, "Found Valid HR Device: $name [${maskAddress(device.address)}]")
                 stopScan()
                 connectToDevice(device)
             }
@@ -295,6 +295,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun startBleMeasurementWatchdog(gatt: BluetoothGatt) {
         bleMeasurementWatchdogJob?.cancel()
         bleMeasurementWatchdogJob = scope.launch {
@@ -401,7 +402,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                 if (_hrState.value.connectionState == BleConnectionState.DISCONNECTED) {
                     val preferred = _hrState.value.preferredDeviceAddress ?: targetDeviceAddress
                     if (preferred != null) {
-                        Log.d(TAG, "10s Auto-retry connecting to last BLE device: $preferred")
+                        Log.d(TAG, "10s Auto-retry connecting to last BLE device: ${maskAddress(preferred)}")
                         connectLastDevice()
                     }
                 }
@@ -545,6 +546,14 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     companion object {
         private const val TAG = "HeartRateManager"
         private const val KEY_PREFERRED_ADDRESS = "preferred_ble_hr_address"
+
+        fun maskAddress(address: String?): String {
+            if (address == null) return "null"
+            if (address.length >= 8) {
+                return address.take(2) + ":**:**:**:" + address.takeLast(2)
+            }
+            return "***"
+        }
         private const val BLE_MEASUREMENT_WATCHDOG_INTERVAL_MS = 3000L
         private const val BLE_MEASUREMENT_TIMEOUT_MS = 8000L
 
