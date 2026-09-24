@@ -251,15 +251,19 @@ private fun collectCycleCandidates(
 }
 
 private fun cycleEdgeSupport(candidate: CycleCandidate, sequences: List<List<SequenceObservation>>): Boolean {
+    // Direction is intentionally ignored here because canonicalCycle() treats
+    // clockwise and counter-clockwise traversals as the same physical circuit.
+    fun edgeKey(a: Int, b: Int): Pair<Int, Int> = if (a <= b) a to b else b to a
+
     val edges = candidate.buoyIds.mapIndexed { i, id ->
-        id to candidate.buoyIds[(i + 1) % candidate.buoyIds.size]
+        edgeKey(id, candidate.buoyIds[(i + 1) % candidate.buoyIds.size])
     }.toSet()
     val supportByEdge = edges.associateWith { mutableSetOf<Int>() }
 
     for ((workoutIndex, sequence) in sequences.withIndex()) {
         for (i in 0 until sequence.lastIndex) {
-            val edge = sequence[i].buoyId to sequence[i + 1].buoyId
-            supportByEdge[edge]?.add(workoutIndex)
+            supportByEdge[edgeKey(sequence[i].buoyId, sequence[i + 1].buoyId)]
+                ?.add(workoutIndex)
         }
     }
 
