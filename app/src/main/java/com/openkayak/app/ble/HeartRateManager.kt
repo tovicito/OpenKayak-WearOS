@@ -72,8 +72,11 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             val device = result.device
             val services = result.scanRecord?.serviceUuids.orEmpty()
             val preferred = _hrState.value.preferredDeviceAddress
-            if (services.any { it.uuid == HEART_RATE_SERVICE_UUID } ||
-                preferred?.equals(device.address, true) == true) {
+            val advertisesHr = services.any { it.uuid == HEART_RATE_SERVICE_UUID }
+            val matchesPreferred = preferred?.equals(device.address, true) == true
+            // Some HR straps omit 0x180D from advertisements. If no preferred
+            // address exists, allow candidates through and validate them over GATT.
+            if (matchesPreferred || advertisesHr || preferred == null) {
                 stopScan()
                 connectToDevice(device)
             }
@@ -102,9 +105,17 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                     )
                 }
                 try { g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) } catch (_: Exception) {}
+                reconnectAttempts = 0
                 lastMeasurement = 0L
                 watchdogJob?.cancel()
-                g.discoverServices()
+                gattScope.launch {
+                    runCatching { g.discoverServices() }
+                        .onFailure { e ->
+                            Log.e(TAG, "discoverServices failed", e)
+                            handleDisconnect(g)
+                            if (autoReconnect) scheduleReconnect()
+                        }
+                }
             } else if (state == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
                 handleDisconnect(g)
                 if (autoReconnect) scheduleReconnect()
