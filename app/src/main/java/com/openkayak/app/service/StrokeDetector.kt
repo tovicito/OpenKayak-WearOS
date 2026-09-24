@@ -56,7 +56,9 @@ class StrokeDetector(context: Context) : SensorEventListener {
         if (isTracking || linearAccSensor == null) return
         isTracking = true
         _strokeState.update { StrokeState() }
-        strokeTimestamps.clear()
+        synchronized(strokeTimestamps) {
+            strokeTimestamps.clear()
+        }
         lastStrokeTimestamp = 0L
         previousAcceleration = 0f
         isPeakArmed = true
@@ -74,7 +76,7 @@ class StrokeDetector(context: Context) : SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        if (!isTracking || event == null) return
+        if (!isTracking || event == null || event.values.size < 3) return
 
         // Minimum speed requirement: must be moving at >= 0.5 km/h to count strokes
         if (currentSpeedKmh < MIN_SPEED_KMH) {
@@ -109,9 +111,12 @@ class StrokeDetector(context: Context) : SensorEventListener {
         if (isPeakArmed && isLocalPeak && (now - lastStrokeTimestamp) > REFRACTORY_PERIOD_MS) {
             isPeakArmed = false
             lastStrokeTimestamp = now
-            strokeTimestamps.addLast(now)
 
-            val spm = calculateSpm(now)
+            val spm = synchronized(strokeTimestamps) {
+                strokeTimestamps.addLast(now)
+                calculateSpmLocked(now)
+            }
+
             _strokeState.update { current ->
                 current.copy(
                     strokeRateSpm = spm,
@@ -125,7 +130,11 @@ class StrokeDetector(context: Context) : SensorEventListener {
         previousAcceleration = filteredAcc
     }
 
-    private fun calculateSpm(now: Long): Int {
+    fun calculateSpm(now: Long): Int = synchronized(strokeTimestamps) {
+        calculateSpmLocked(now)
+    }
+
+    private fun calculateSpmLocked(now: Long): Int {
         val tenSecondsAgo = now - 10_000L
         while (strokeTimestamps.isNotEmpty() && strokeTimestamps.first() < tenSecondsAgo) {
             strokeTimestamps.removeFirst()

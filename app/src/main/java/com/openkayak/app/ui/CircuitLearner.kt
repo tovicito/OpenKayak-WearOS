@@ -98,9 +98,24 @@ fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double 
 }
 
 fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
-    val result = FloatArray(1)
-    Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, result)
-    return result[0]
+    return try {
+        val result = FloatArray(1)
+        Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, result)
+        result[0]
+    } catch (_: Throwable) {
+        haversineMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+    }
+}
+
+fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+    val r = 6371000.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2)
+    val c = 2 * atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+    return (r * c).toFloat()
 }
 
 private fun bearingDegrees(a: GpsPoint, b: GpsPoint): Double {
@@ -496,7 +511,7 @@ suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEnt
             val previous = saved.firstOrNull { it.signature == candidate.signature }
             generated += LearnedCircuit(
                 id = previous?.id ?: stableCircuitId(candidate.signature),
-                name = previous?.name ?: "Circuito \${generated.size + 1} (\${buoys.size} boyas)",
+                name = previous?.name ?: "Circuito ${generated.size + 1} (${buoys.size} boyas)",
                 startLat = buoys.first().latitude,
                 startLon = buoys.first().longitude,
                 turnLat = buoys.first().latitude,
