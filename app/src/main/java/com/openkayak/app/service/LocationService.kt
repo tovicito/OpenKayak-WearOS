@@ -313,10 +313,14 @@ class LocationService : Service() {
 
         if (!_workoutState.value.isTracking || _workoutState.value.isPaused) return
 
+        // Never let a low-quality fix become the reference point for the next
+        // distance calculation. Otherwise one bad fix can poison the following
+        // valid point and create a false jump or a missing distance segment.
         if (location.hasAccuracy() && location.accuracy > 30f) return
 
         var rawSpeedKmh = if (location.hasSpeed()) location.speed * 3.6f else 0f
         var addedDistance = 0f
+        var acceptAsReference = true
 
         lastLocation?.let { prev ->
             val dist = prev.distanceTo(location)
@@ -328,9 +332,13 @@ class LocationService : Service() {
                 }
             } else if (dist >= 100f) {
                 Log.w(TAG, "Ignoring unrealistic GPS jump of $dist meters for distance accumulation")
+                acceptAsReference = false
             }
         }
-        lastLocation = location
+
+        if (acceptAsReference) {
+            lastLocation = location
+        }
 
         if (speedWindow.size >= 5) {
             speedWindow.removeFirst()
