@@ -45,6 +45,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val gattScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
     private val adapter = bluetoothManager?.adapter
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
@@ -125,28 +126,46 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             if (g != gatt || status != BluetoothGatt.GATT_SUCCESS) {
-                handleDisconnect(g); return
+                handleDisconnect(g)
+                if (autoReconnect) scheduleReconnect()
+                return
             }
-            val service = g.getService(HEART_RATE_SERVICE_UUID)
-            val ch = service?.getCharacteristic(HEART_RATE_MEASUREMENT_CHAR_UUID)
-            if (ch == null) { handleDisconnect(g); return }
-            val notify = ch.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
-            val indicate = ch.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
-            if (!notify && !indicate || !g.setCharacteristicNotification(ch, true)) {
-                handleDisconnect(g); return
-            }
-            val cccd = ch.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
-            if (cccd == null) { handleDisconnect(g); return }
-            val value = if (notify) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                        else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-            try {
-                if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(cccd, value)
-                else {
-                    @Suppress("DEPRECATION") cccd.value = value
-                    @Suppress("DEPRECATION") g.writeDescriptor(cccd)
+            gattScope.launch {
+                val service = g.getService(HEART_RATE_SERVICE_UUID)
+                val ch = service?.getCharacteristic(HEART_RATE_MEASUREMENT_CHAR_UUID)
+                if (ch == null) {
+                    Log.w(TAG, "Device has no Heart Rate Measurement characteristic")
+                    handleDisconnect(g)
+                    if (autoReconnect) scheduleReconnect()
+                    return@launch
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "CCCD write failed", e); handleDisconnect(g)
+                val notify = ch.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0
+                val indicate = ch.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+                if ((!notify && !indicate) || !g.setCharacteristicNotification(ch, true)) {
+                    handleDisconnect(g)
+                    if (autoReconnect) scheduleReconnect()
+                    return@launch
+                }
+                val cccd = ch.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
+                if (cccd == null) {
+                    handleDisconnect(g)
+                    if (autoReconnect) scheduleReconnect()
+                    return@launch
+                }
+                val value = if (notify) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                try {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        g.writeDescriptor(cccd, value)
+                    } else {
+                        @Suppress("DEPRECATION") cccd.value = value
+                        @Suppress("DEPRECATION") g.writeDescriptor(cccd)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "CCCD write failed", e)
+                    handleDisconnect(g)
+                    if (autoReconnect) scheduleReconnect()
+                }
             }
         }
 
