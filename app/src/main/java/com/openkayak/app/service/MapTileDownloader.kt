@@ -48,8 +48,7 @@ class MapTileDownloader(private val context: Context) {
                     setUseDataConnection(true)
                 }
 
-                try {
-                    val manager = CacheManager(mapView)
+                val manager = CacheManager(mapView)
                     val total = manager.possibleTilesInArea(asturias, MIN_ZOOM, MAX_ZOOM)
                     _state.update {
                         it.copy(
@@ -59,7 +58,7 @@ class MapTileDownloader(private val context: Context) {
                         )
                     }
 
-                    manager.downloadAreaAsync(
+                manager.downloadAreaAsync(
                         context,
                         asturias,
                         MIN_ZOOM,
@@ -110,10 +109,7 @@ class MapTileDownloader(private val context: Context) {
                                 }
                             }
                         }
-                    )
-                } finally {
-                    mapView.onDetach()
-                }
+                )
             } catch (t: Throwable) {
                 Log.e(TAG, "Offline map download failed", t)
                 _state.value = DownloadState(
