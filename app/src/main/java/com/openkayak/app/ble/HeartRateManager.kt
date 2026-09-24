@@ -309,7 +309,11 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
         reconnectJob = scope.launch {
-            delay(RECONNECT_DELAY)
+            reconnectAttempts = (reconnectAttempts + 1).coerceAtMost(16)
+            val delayTime = (RECONNECT_BASE_DELAY * (1L shl (reconnectAttempts - 1)))
+                .coerceAtMost(RECONNECT_MAX_DELAY)
+            Log.d(TAG, "Scheduling BLE reconnect #$reconnectAttempts in ${delayTime}ms")
+            delay(delayTime)
             if (!autoReconnect || _hrState.value.connectionState != BleConnectionState.DISCONNECTED) return@launch
             val address = targetAddress ?: _hrState.value.preferredDeviceAddress
             val device = address?.let { try { adapter?.getRemoteDevice(it) } catch (_: Exception) { null } }
@@ -347,6 +351,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     @SuppressLint("MissingPermission")
     fun disconnect() {
         autoReconnect = false
+        reconnectAttempts = 0
         reconnectJob?.cancel()
         watchdogJob?.cancel()
         stopScan()
