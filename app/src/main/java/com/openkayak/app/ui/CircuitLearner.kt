@@ -41,7 +41,8 @@ data class CircuitAnalysisResult(
 private data class TurnObservation(
     val workoutIndex: Int,
     val pointIndex: Int,
-    val point: GpsPoint
+    val point: GpsPoint,
+    val angleDegrees: Double
 )
 
 private data class BuoyCluster(
@@ -57,6 +58,11 @@ private data class BuoyCluster(
         }
         return GpsPoint(lat / observations.size, lon / observations.size, 0.0, 0L)
     }
+
+    fun distinctWorkoutCount(): Int = observations.map { it.workoutIndex }.distinct().size
+
+    fun containsWorkout(workoutIndex: Int): Boolean =
+        observations.any { it.workoutIndex == workoutIndex }
 }
 
 private data class SequenceObservation(
@@ -75,7 +81,8 @@ private const val PREFS = "learned_circuits_prefs"
 private const val JSON_KEY = "circuits_json"
 private const val SAMPLE_METERS = 15f
 private const val BUOY_CLUSTER_METERS = 25f
-private const val MIN_TURN_ANGLE = 25.0
+private const val MIN_TURN_ANGLE = 35.0
+private const val MAX_CLUSTER_DIAMETER_METERS = 50f
 private const val MIN_BUOY_OCCURRENCES = 5
 private const val MIN_CIRCUIT_BUOYS = 3
 private const val MAX_CIRCUIT_BUOYS = 10
@@ -131,14 +138,14 @@ private fun extractTurnObservations(workouts: List<List<GpsPoint>>): List<TurnOb
         val samples = sampled(points)
         if (samples.size < 7) continue
 
+        val samplePoints = samples.map { it.second }
         var lastAccepted: GpsPoint? = null
         for (i in 2 until samples.lastIndex - 1) {
-            val samplePoints = samples.map { it.second }
             val angle = turnAngleFromWindow(samplePoints, i)
             val point = samples[i].second
             if (angle < MIN_TURN_ANGLE) continue
-            if (lastAccepted != null && distanceBetweenMeters(lastAccepted!!, point) < 45f) continue
-            turns += TurnObservation(workoutIndex, samples[i].first, point)
+            if (lastAccepted != null && distanceBetweenMeters(lastAccepted, point) < 45f) continue
+            turns += TurnObservation(workoutIndex, samples[i].first, point, angle)
             lastAccepted = point
         }
     }
@@ -147,22 +154,40 @@ private fun extractTurnObservations(workouts: List<List<GpsPoint>>): List<TurnOb
 
 private fun clusterTurns(turns: List<TurnObservation>): List<BuoyCluster> {
     val clusters = mutableListOf<BuoyCluster>()
-    for (turn in turns) {
+
+    for (turn in turns.sortedWith(compareByDescending<TurnObservation> { it.angleDegrees }.thenBy { it.workoutIndex }.thenBy { it.pointIndex })) {
         var best: BuoyCluster? = null
         var bestDistance = Float.MAX_VALUE
+
         for (cluster in clusters) {
-            val d = distanceBetweenMeters(turn.point, cluster.center())
-            if (d <= BUOY_CLUSTER_METERS && d < bestDistance) {
+            if (cluster.containsWorkout(turn.workoutIndex)) {
+                val sameWorkoutDistances = cluster.observations
+                    .filter { it.workoutIndex == turn.workoutIndex }
+                    .map { distanceBetweenMeters(it.point, turn.point) }
+                if (sameWorkoutDistances.any { it < 45f }) continue
+            }
+
+            val centerDistance = distanceBetweenMeters(turn.point, cluster.center())
+            if (centerDistance > BUOY_CLUSTER_METERS) continue
+
+            val maxDistance = cluster.observations.maxOfOrNull {
+                distanceBetweenMeters(it.point, turn.point)
+            } ?: 0f
+            if (maxDistance > MAX_CLUSTER_DIAMETER_METERS) continue
+
+            if (centerDistance < bestDistance) {
                 best = cluster
-                bestDistance = d
+                bestDistance = centerDistance
             }
         }
+
         if (best != null) {
             best.observations += turn
         } else {
             clusters += BuoyCluster(clusters.size, mutableListOf(turn))
         }
     }
+
     return clusters
 }
 
@@ -186,8 +211,11 @@ private fun buildWorkoutSequences(
 }
 
 private fun canonicalCycle(ids: List<Int>): Pair<String, List<Int>> {
-    val rotations = ids.indices.map { start -> ids.drop(start) + ids.take(start) }
-    val best = rotations.minWithOrNull(compareBy<List<Int>> { it.joinToString(",") }) ?: ids
+    if (ids.isEmpty()) return "" to emptyList()
+    val forward = ids.indices.map { start -> ids.drop(start) + ids.take(start) }
+    val reversedIds = ids.reversed()
+    val reverse = reversedIds.indices.map { start -> reversedIds.drop(start) + reversedIds.take(start) }
+    val best = (forward + reverse).minWithOrNull(compareBy<List<Int>> { it.joinToString(",") }) ?: ids
     return best.joinToString("-") to best
 }
 
@@ -223,28 +251,54 @@ private fun collectCycleCandidates(
 }
 
 private fun cycleEdgeSupport(candidate: CycleCandidate, sequences: List<List<SequenceObservation>>): Boolean {
-    val edges = candidate.buoyIds.mapIndexed { i, id -> id to candidate.buoyIds[(i + 1) % candidate.buoyIds.size] }
-    val counts = edges.associateWith { 0 }.toMutableMap()
-    for (sequence in sequences) {
+    val edges = candidate.buoyIds.mapIndexed { i, id ->
+        id to candidate.buoyIds[(i + 1) % candidate.buoyIds.size]
+    }.toSet()
+    val supportByEdge = edges.associateWith { mutableSetOf<Int>() }
+
+    for ((workoutIndex, sequence) in sequences.withIndex()) {
         for (i in 0 until sequence.lastIndex) {
             val edge = sequence[i].buoyId to sequence[i + 1].buoyId
-            if (edge in counts) counts[edge] = counts.getValue(edge) + 1
+            supportByEdge[edge]?.add(workoutIndex)
         }
     }
-    return counts.values.all { it >= MIN_BUOY_OCCURRENCES }
+
+    return supportByEdge.values.all { it.size >= MIN_BUOY_OCCURRENCES }
+}
+
+private fun resamplePolyline(polyline: List<GeoPoint>, targetSize: Int): List<GeoPoint> {
+    if (polyline.size <= 1 || targetSize <= 1) return polyline
+    val cumulative = DoubleArray(polyline.size)
+    for (i in 1 until polyline.size) {
+        cumulative[i] = cumulative[i - 1] + distanceBetweenMeters(
+            GpsPoint(polyline[i - 1].latitude, polyline[i - 1].longitude, 0.0, 0L),
+            GpsPoint(polyline[i].latitude, polyline[i].longitude, 0.0, 0L)
+        )
+    }
+    val total = cumulative.last()
+    if (total <= 0.0) return List(targetSize) { polyline.first() }
+
+    return List(targetSize) { index ->
+        val wanted = total * index / (targetSize - 1)
+        var hi = cumulative.binarySearch(wanted)
+        if (hi < 0) hi = -hi - 1
+        if (hi <= 0) return@List polyline.first()
+        if (hi >= polyline.size) return@List polyline.last()
+        val lo = hi - 1
+        val span = cumulative[hi] - cumulative[lo]
+        val t = if (span <= 0.0) 0.0 else (wanted - cumulative[lo]) / span
+        GeoPoint(
+            polyline[lo].latitude + (polyline[hi].latitude - polyline[lo].latitude) * t,
+            polyline[lo].longitude + (polyline[hi].longitude - polyline[lo].longitude) * t
+        )
+    }
 }
 
 private fun meanPolyline(polylines: List<List<GeoPoint>>, targetSize: Int = 80): List<GeoPoint> {
-    if (polylines.isEmpty()) return emptyList()
-    val normalized = polylines.map { poly ->
-        if (poly.size <= targetSize) poly
-        else List(targetSize) { i ->
-            val index = (i.toDouble() * (poly.lastIndex.toDouble() / (targetSize - 1))).toInt()
-            poly[index]
-        }
-    }
-    val size = normalized.minOf { it.size }
-    return List(size) { i ->
+    val usable = polylines.filter { it.size >= 2 }
+    if (usable.isEmpty()) return emptyList()
+    val normalized = usable.map { resamplePolyline(it, targetSize) }
+    return List(targetSize) { i ->
         GeoPoint(
             normalized.sumOf { it[i].latitude } / normalized.size,
             normalized.sumOf { it[i].longitude } / normalized.size
@@ -399,7 +453,11 @@ suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEnt
 
         val turns = extractTurnObservations(workouts)
         val clusters = clusterTurns(turns)
-        val validClusters = clusters.filter { it.observations.size >= MIN_BUOY_OCCURRENCES }
+        val validClusters = clusters
+            .filter { it.distinctWorkoutCount() >= MIN_BUOY_OCCURRENCES }
+            .sortedWith(compareBy({ it.center().latitude }, { it.center().longitude }))
+            .mapIndexed { index, cluster -> cluster.copy(id = index) }
+
         if (validClusters.size < MIN_CIRCUIT_BUOYS) {
             saveLearnedCircuits(context, saved)
             return@withContext CircuitAnalysisResult(saved.filterNot { it.isDeleted }, emptyList())
