@@ -34,7 +34,8 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         private const val PREFS = "ble_prefs"
         private const val KEY_ADDRESS = "preferred_ble_hr_address"
         private const val SCAN_TIMEOUT = 15_000L
-        private const val RECONNECT_DELAY = 2_500L
+        private const val RECONNECT_BASE_DELAY = 2_000L
+        private const val RECONNECT_MAX_DELAY = 30_000L
         private const val WATCHDOG_INTERVAL = 5_000L
         private const val NOTIFICATION_TIMEOUT = 20_000L
         val HEART_RATE_SERVICE_UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
@@ -52,6 +53,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     private var gatt: BluetoothGatt? = null
     private var scanJob: Job? = null
     private var reconnectJob: Job? = null
+    private var reconnectAttempts = 0
     private var watchdogJob: Job? = null
     private var pulseJob: Job? = null
     private var targetAddress: String? = null
