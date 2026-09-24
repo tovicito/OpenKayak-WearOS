@@ -1,9 +1,10 @@
 name: Android build
+# Stable BLE/GATT rebuild validation
 
 on:
   push:
     branches:
-      - fix/learned-buoys-circuits
+      - rebuild/wearos-stable
   workflow_dispatch:
 
 permissions:
@@ -14,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Java 17
         uses: actions/setup-java@v4

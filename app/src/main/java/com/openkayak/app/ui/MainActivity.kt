@@ -1797,211 +1797,89 @@ fun AmbientModeScreen(
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { ctx ->
+                MapView(ctx).apply {
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setMultiTouchControls(false)
+                    controller.setZoom(16.5)
+                    if (activePoint != null) {
+                        controller.setCenter(GeoPoint(activePoint.latitude, activePoint.longitude))
+                    } else {
+                        controller.setCenter(GeoPoint(43.3614, -5.8593))
+                    }
+                }
+            },
+            update = { map ->
+                map.overlays.clear()
+                val track = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
+                if (track.size >= 2) {
+                    map.overlays.add(Polyline().apply {
+                        setPoints(track)
+                        outlinePaint.color = android.graphics.Color.WHITE
+                        outlinePaint.strokeWidth = 5f
+                    })
+                }
+                if (activePoint != null) {
+                    val p = GeoPoint(activePoint.latitude, activePoint.longitude)
+                    map.overlays.add(Marker(map).apply {
+                        position = p
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                        icon = null
+                    })
+                    map.controller.setCenter(p)
+                }
+                map.invalidate()
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // AOD intentionally keeps the map full-screen. Metrics are isolated in small
+        // dark rounded cards so the route remains readable without the old vignette.
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 16.dp, bottom = 4.dp, start = 8.dp, end = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxSize().padding(horizontal = 7.dp, vertical = 7.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = formatTime(workoutState.elapsedTimeSeconds),
-                fontSize = 24.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.White
-            )
-            if (workoutState.lapCount > 0) {
-                Spacer(modifier = Modifier.width(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
                 Text(
-                    text = "V:${workoutState.lapCount}",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Yellow,
+                    text = formatTime(workoutState.elapsedTimeSeconds),
+                    color = Color.White,
+                    fontSize = 23.sp,
+                    fontWeight = FontWeight.ExtraBold,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF333300))
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xB5000000))
+                        .padding(horizontal = 9.dp, vertical = 4.dp)
                 )
             }
-        }
 
-        Spacer(modifier = Modifier.height(2.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "KM/H", fontSize = 8.sp, color = Color.Gray)
-                Text(
-                    text = String.format("%.1f", workoutState.speedKmh),
-                    fontSize = 15.sp,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "PALADAS", fontSize = 8.sp, color = Color.Gray)
-                Text(
-                    text = "${workoutState.strokeRateSpm}",
-                    fontSize = 15.sp,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(text = "FC", fontSize = 8.sp, color = Color.Gray)
-                Text(
-                    text = if (hrBpm > 0) "$hrBpm" else "--",
-                    fontSize = 15.sp,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                AmbientMetricBox("KM/H", String.format("%.1f", workoutState.speedKmh))
+                AmbientMetricBox("PALADAS", workoutState.strokeRateSpm.toString())
+                AmbientMetricBox("FC", if (hrBpm > 0) hrBpm.toString() else "--")
             }
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(2.dp))
-
-        val context = LocalContext.current
-        val db = remember { KayakDatabase.getInstance(context) }
-        val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
-        var learnedCircuits by remember { mutableStateOf<List<LearnedCircuit>>(emptyList()) }
-
-        LaunchedEffect(workoutList) {
-            learnedCircuits = getSavedLearnedCircuits(context)
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF111111))
-        ) {
-            AndroidView(
-                factory = { ctx ->
-                    MapView(ctx).apply {
-                        setTileSource(TileSourceFactory.MAPNIK)
-                        setMultiTouchControls(false)
-                        controller.setZoom(16.5)
-                        if (activePoint != null) {
-                            controller.setCenter(GeoPoint(activePoint.latitude, activePoint.longitude))
-                        } else {
-                            controller.setCenter(GeoPoint(43.3614, -5.8593))
-                        }
-                    }
-                },
-                update = { mapView ->
-                    mapView.overlays.clear()
-
-                    for (circuit in learnedCircuits) {
-                        val turnGeo = GeoPoint(circuit.turnLat, circuit.turnLon)
-                        val pathPts = if (circuit.outerPolyline.isNotEmpty()) circuit.outerPolyline else listOf(GeoPoint(circuit.startLat, circuit.startLon), turnGeo)
-
-                        val greenPolyline = Polyline().apply {
-                            setPoints(pathPts)
-                            outlinePaint.color = android.graphics.Color.GREEN
-                            outlinePaint.strokeWidth = 6f
-                        }
-                        mapView.overlays.add(greenPolyline)
-
-                        val pinkMarker = Marker(mapView).apply {
-                            position = turnGeo
-                            title = "Boya Giro"
-                        }
-                        mapView.overlays.add(pinkMarker)
-                    }
-
-                    val points = trackPoints.map { GeoPoint(it.latitude, it.longitude) }
-                    if (points.isNotEmpty()) {
-                        val polyline = Polyline().apply {
-                            setPoints(points)
-                            outlinePaint.color = android.graphics.Color.RED
-                            outlinePaint.strokeWidth = 6f
-                        }
-                        mapView.overlays.add(polyline)
-                    }
-
-                    if (activePoint != null) {
-                        val currentMarker = Marker(mapView).apply {
-                            position = GeoPoint(activePoint.latitude, activePoint.longitude)
-                            title = "Posición"
-                        }
-                        mapView.overlays.add(currentMarker)
-                        mapView.controller.setCenter(GeoPoint(activePoint.latitude, activePoint.longitude))
-                    }
-
-                    mapView.invalidate()
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-
-            // Faded edge vignette overlay for smooth blending with ambient screen background
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val edgeWidth = 18.dp.toPx()
-                // Top edge fade
-                drawRect(
-                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
-                        colors = listOf(Color.Black, Color.Transparent),
-                        startY = 0f,
-                        endY = edgeWidth
-                    )
-                )
-                // Bottom edge fade
-                drawRect(
-                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color.Black),
-                        startY = size.height - edgeWidth,
-                        endY = size.height
-                    )
-                )
-                // Left edge fade
-                drawRect(
-                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
-                        colors = listOf(Color.Black, Color.Transparent),
-                        startX = 0f,
-                        endX = edgeWidth
-                    )
-                )
-                // Right edge fade
-                drawRect(
-                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
-                        colors = listOf(Color.Transparent, Color.Black),
-                        startX = size.width - edgeWidth,
-                        endX = size.width
-                    )
-                )
-            }
-        }
-        }
-
-        // Green 'X' Exit AOD Button in top-right corner
-        Button(
-            onClick = onExitAmbient,
-            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF00E676)),
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 10.dp, end = 10.dp)
-                .size(32.dp)
-                .clip(CircleShape)
-        ) {
-            Text(
-                text = "X",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.Black
-            )
-        }
+@Composable
+private fun AmbientMetricBox(label: String, value: String) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(Color(0xB5333333))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(label, color = Color.LightGray, fontSize = 7.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
     }
 }
 
