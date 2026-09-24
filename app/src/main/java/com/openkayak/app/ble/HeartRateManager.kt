@@ -9,7 +9,6 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
-import android.os.ParcelUuid
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -229,9 +228,13 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         stopScan()
         _hrState.update { it.copy(connectionState = BleConnectionState.SCANNING) }
         val scanner = bt.bluetoothLeScanner ?: return
-        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(HEART_RATE_SERVICE_UUID)).build()
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).setReportDelay(0).build()
-        try { scanner.startScan(listOf(filter), settings, scanCallback) }
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
+            .build()
+        // Do not filter by 0x180D at the scanner level. Some straps do not
+        // advertise their Heart Rate Service and would otherwise never reach GATT.
+        try { scanner.startScan(emptyList(), settings, scanCallback) }
         catch (e: Exception) {
             Log.e(TAG, "startScan failed", e)
             _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
