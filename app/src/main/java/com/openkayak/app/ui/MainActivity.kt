@@ -56,6 +56,9 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -922,7 +925,7 @@ fun DashboardScreen(
                         ) {
                             Icon(
                                 if (workoutState.isPaused) Icons.Default.PlayArrow else Icons.Default.Refresh,
-                                contentDescription = "PauseResume"
+                                contentDescription = if (workoutState.isPaused) "Reanudar entrenamiento" else "Pausar entrenamiento"
                             )
                         }
 
@@ -1143,6 +1146,7 @@ fun MapScreen(
                 .padding(start = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Pantalla anterior" }
         ) {
             Text("<", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1156,6 +1160,7 @@ fun MapScreen(
                 .padding(end = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Pantalla siguiente" }
         ) {
             Text(">", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1216,6 +1221,7 @@ fun HistoryScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar vista previa de mapa" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1296,7 +1302,9 @@ fun HistoryScreen() {
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar entrenamiento" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -1390,6 +1398,7 @@ fun CircuitsScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar vista previa de recorrido" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1460,7 +1469,9 @@ fun CircuitsScreen() {
                                         circuits = circuits.filterNot { it.id == circuit.id }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar recorrido" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -1546,13 +1557,17 @@ fun SettingsScreen(
                             Row {
                                 Button(
                                     onClick = { if (age > 10) { age--; saveProfile() } },
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .semantics { contentDescription = "Disminuir edad" },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                                 ) { Text("-", fontSize = 10.sp) }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Button(
                                     onClick = { if (age < 99) { age++; saveProfile() } },
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .semantics { contentDescription = "Aumentar edad" },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                                 ) { Text("+", fontSize = 10.sp) }
                             }
@@ -1569,13 +1584,17 @@ fun SettingsScreen(
                             Row {
                                 Button(
                                     onClick = { if (weightKg > 30) { weightKg -= 1f; saveProfile() } },
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .semantics { contentDescription = "Disminuir peso" },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                                 ) { Text("-", fontSize = 10.sp) }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Button(
                                     onClick = { if (weightKg < 200) { weightKg += 1f; saveProfile() } },
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .semantics { contentDescription = "Aumentar peso" },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                                 ) { Text("+", fontSize = 10.sp) }
                             }
@@ -1592,13 +1611,17 @@ fun SettingsScreen(
                             Row {
                                 Button(
                                     onClick = { if (heightCm > 120) { heightCm--; saveProfile() } },
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .semantics { contentDescription = "Disminuir altura" },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                                 ) { Text("-", fontSize = 10.sp) }
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Button(
                                     onClick = { if (heightCm < 230) { heightCm++; saveProfile() } },
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .semantics { contentDescription = "Aumentar altura" },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.DarkGray)
                                 ) { Text("+", fontSize = 10.sp) }
                             }
