@@ -2,80 +2,67 @@ package com.openkayak.app.data
 
 import android.content.Context
 import android.util.Log
-import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
-import androidx.health.connect.client.units.Length
-import java.time.Instant
-import java.time.ZoneOffset
+import androidx.health.connect.client.records.HeartRateRecord
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.tasks.await
+import org.json.JSONArray
+import org.json.JSONObject
 
 class HealthConnectManager(private val context: Context) {
 
-    val healthConnectClient by lazy {
-        try {
-            if (HealthConnectClient.getSdkStatus(context) == HealthConnectClient.SDK_AVAILABLE) {
-                HealthConnectClient.getOrCreate(context)
-            } else null
-        } catch (e: Exception) {
-            Log.e(TAG, "Health Connect Client initialization error: ${e.localizedMessage}")
-            null
-        }
+    suspend fun syncWorkout(workout: WorkoutEntity): Boolean {
+        return runCatching {
+            val id = "workout-" + workout.id + "-" + workout.timestamp
+            val payload = JSONObject().apply {
+                put("id", id)
+                put("startTime", workout.timestamp - workout.durationSeconds * 1000L)
+                put("endTime", workout.timestamp)
+                put("distanceMeters", workout.distanceMeters.toDouble())
+                put("avgSpeedKmh", workout.avgSpeedKmh.toDouble())
+                put("maxSpeedKmh", workout.maxSpeedKmh.toDouble())
+                put("totalStrokes", workout.totalStrokes)
+                put("avgStrokeRateSpm", workout.avgStrokeRateSpm)
+                put("calories", workout.estimatedCalories)
+                put("routeJson", workout.routeGpsJson)
+                put("heartRateJson", workout.heartRateJson)
+            }.toString()
+
+            // Health Connect lives on Android phones, not on Wear OS. The Data Layer
+            // persists this item and delivers it when the paired phone is available.
+            val request = PutDataMapRequest.create("/openkayak/hc/workout/$id").apply {
+                dataMap.putString("payload", payload)
+            }.asPutDataRequest().setUrgent()
+
+            Wearable.getDataClient(context).putDataItem(request).await()
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(id, payload).apply()
+            true
+        }.onFailure {
+            Log.e(TAG, "Health Connect handoff failed", it)
+        }.getOrDefault(false)
     }
 
-    val permissions = setOf(
-        HealthPermission.getWritePermission(ExerciseSessionRecord::class),
-        HealthPermission.getWritePermission(DistanceRecord::class)
-    )
-
-    suspend fun hasAllPermissions(): Boolean {
-        return try {
-            val client = healthConnectClient ?: return false
-            val granted = client.permissionController.getGrantedPermissions()
-            granted.containsAll(permissions)
-        } catch (e: Exception) {
-            Log.e(TAG, "hasAllPermissions exception: ${e.localizedMessage}")
-            false
-        }
+    suspend fun retryWorkout(id: String): Boolean {
+        val payload = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(id, null) ?: return false
+        return runCatching {
+            val request = PutDataMapRequest.create("/openkayak/hc/workout/$id").apply {
+                dataMap.putString("payload", payload)
+            }.asPutDataRequest().setUrgent()
+            Wearable.getDataClient(context).putDataItem(request).await()
+            true
+        }.getOrDefault(false)
     }
 
-    suspend fun writeKayakWorkout(
-        startTimeMillis: Long,
-        endTimeMillis: Long,
-        distanceMeters: Float
-    ) {
-        val client = healthConnectClient ?: return
-
-        try {
-            val startInstant = Instant.ofEpochMilli(startTimeMillis)
-            val endInstant = Instant.ofEpochMilli(endTimeMillis)
-
-            // Kayaking Paddling Exercise Record
-            val exerciseRecord = ExerciseSessionRecord(
-                startTime = startInstant,
-                startZoneOffset = ZoneOffset.UTC,
-                endTime = endInstant,
-                endZoneOffset = ZoneOffset.UTC,
-                exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_PADDLING,
-                title = "Kayak OpenKayak"
-            )
-
-            val distanceRecord = DistanceRecord(
-                startTime = startInstant,
-                startZoneOffset = ZoneOffset.UTC,
-                endTime = endInstant,
-                endZoneOffset = ZoneOffset.UTC,
-                distance = Length.meters(distanceMeters.toDouble())
-            )
-
-            client.insertRecords(listOf(exerciseRecord, distanceRecord))
-            Log.d(TAG, "Successfully written Kayak session to Health Connect!")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to write Health Connect records: ${e.localizedMessage}")
-        }
+    fun forgetWorkout(id: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(id).apply()
     }
 
     companion object {
-        private const val TAG = "HealthConnectManager"
+        private const val TAG = "OpenKayakHealthConnect"
+        private const val PREFS = "health_connect_pending"
     }
 }

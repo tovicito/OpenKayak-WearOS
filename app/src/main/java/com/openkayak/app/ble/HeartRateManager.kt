@@ -12,6 +12,8 @@ import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
 enum class BleConnectionState { DISCONNECTED, SCANNING, CONNECTING, CONNECTED }
@@ -60,6 +62,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     private var autoReconnect = false
     private var lastMeasurement = 0L
     private var watchSensorActive = false
+    private var recordingWorkout = false
+    private val workoutSamples = mutableListOf<Pair<Long, Int>>()
+    private var lastRecordedSample = 0L
 
     private val _hrState = MutableStateFlow(
         BleHeartRateState(preferredDeviceAddress = prefs.getString(KEY_ADDRESS, null))
@@ -199,6 +204,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         if (bpm !in 30..240) return
         lastMeasurement = System.currentTimeMillis()
         stopWatchSensor()
+        recordWorkoutSample(bpm)
         _hrState.update { it.copy(heartRateBpm = bpm, isPulseActive = true, isUsingInternalSensor = false) }
         pulseJob?.cancel()
         pulseJob = scope.launch { delay(350); _hrState.update { it.copy(isPulseActive = false) } }
@@ -326,6 +332,37 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
 
     fun startMonitoring() { startWatchSensor() }
 
+    fun beginWorkoutRecording() {
+        synchronized(workoutSamples) {
+            workoutSamples.clear()
+            lastRecordedSample = 0L
+            recordingWorkout = true
+        }
+    }
+
+    fun endWorkoutRecordingJson(): String {
+        synchronized(workoutSamples) {
+            recordingWorkout = false
+            val array = JSONArray()
+            workoutSamples.forEach { (time, bpm) ->
+                array.put(JSONObject().put("t", time).put("bpm", bpm))
+            }
+            workoutSamples.clear()
+            return array.toString()
+        }
+    }
+
+    private fun recordWorkoutSample(bpm: Int) {
+        synchronized(workoutSamples) {
+            if (!recordingWorkout) return
+            val now = System.currentTimeMillis()
+            if (now - lastRecordedSample >= 1000L) {
+                workoutSamples.add(now to bpm)
+                lastRecordedSample = now
+            }
+        }
+    }
+
     private fun startWatchSensor() {
         if (!watchSensorActive && watchSensor != null) {
             watchSensorActive = sensorManager?.registerListener(this, watchSensor, SensorManager.SENSOR_DELAY_NORMAL) == true
@@ -344,6 +381,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         if (event?.sensor?.type != Sensor.TYPE_HEART_RATE || _hrState.value.connectionState == BleConnectionState.CONNECTED) return
         val bpm = event.values.firstOrNull()?.toInt() ?: return
         if (bpm !in 30..240) return
+        recordWorkoutSample(bpm)
         _hrState.update { it.copy(heartRateBpm = bpm, isPulseActive = true, isUsingInternalSensor = true, deviceName = "Reloj") }
         pulseJob?.cancel()
         pulseJob = scope.launch { delay(350); _hrState.update { it.copy(isPulseActive = false) } }

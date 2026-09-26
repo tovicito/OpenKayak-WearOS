@@ -207,6 +207,7 @@ class MainActivity : ComponentActivity() {
                     val endTime = System.currentTimeMillis()
                     val startTime = endTime - (workoutState.elapsedTimeSeconds * 1000L)
 
+                    val heartRateJson = hrManager.endWorkoutRecordingJson()
                     val entity = WorkoutEntity(
                         timestamp = endTime,
                         durationSeconds = workoutState.elapsedTimeSeconds,
@@ -216,17 +217,14 @@ class MainActivity : ComponentActivity() {
                         totalStrokes = workoutState.totalStrokes,
                         avgStrokeRateSpm = workoutState.strokeRateSpm,
                         estimatedCalories = calories,
-                        routeGpsJson = jsonRoute
+                        routeGpsJson = jsonRoute,
+                        heartRateJson = heartRateJson
                     )
 
                     val db = KayakDatabase.getInstance(applicationContext)
                     CoroutineScope(Dispatchers.IO).launch {
                         db.workoutDao().insertWorkout(entity)
-                        healthConnectManager.writeKayakWorkout(
-                            startTimeMillis = startTime,
-                            endTimeMillis = endTime,
-                            distanceMeters = workoutState.distanceMeters
-                        )
+                        healthConnectManager.syncWorkout(entity)
 
                         // Rebuild learned circuits only after the raw workout is safely persisted.
                         // The learner never mutates routeGpsJson, so historical workouts remain the source of truth.
@@ -265,7 +263,20 @@ class MainActivity : ComponentActivity() {
         val sb = StringBuilder("[")
         for (i in points.indices) {
             val p = points[i]
-            sb.append("{\"lat\":${p.latitude},\"lon\":${p.longitude}}")
+            val speedKmh = if (i > 0) {
+                val previous = points[i - 1]
+                val dt = (p.timestamp - previous.timestamp) / 1000f
+                if (dt > 0f) {
+                    val results = FloatArray(1)
+                    android.location.Location.distanceBetween(
+                        previous.latitude, previous.longitude,
+                        p.latitude, p.longitude,
+                        results
+                    )
+                    (results[0] / dt) * 3.6f
+                } else 0f
+            } else 0f
+            sb.append("{\"lat\":${p.latitude},\"lon\":${p.longitude},\"alt\":${p.altitude},\"t\":${p.timestamp},\"speed\":${speedKmh}}")
             if (i < points.size - 1) sb.append(",")
         }
         sb.append("]")
@@ -309,12 +320,6 @@ fun OpenKayakApp(
     val coroutineScope = rememberCoroutineScope()
     var permissionsGranted by remember { mutableStateOf(false) }
 
-    val healthConnectLauncher = rememberLauncherForActivityResult(
-        contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
-        // Health connect permission result
-    }
-
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -349,17 +354,6 @@ fun OpenKayakApp(
         if (permissionsGranted) {
             locationService?.startLocationUpdates()
             hrManager.startMonitoring()
-            if (healthConnectManager.healthConnectClient != null) {
-                coroutineScope.launch {
-                    try {
-                        if (!healthConnectManager.hasAllPermissions()) {
-                            healthConnectLauncher.launch(healthConnectManager.permissions)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("MainActivity", "Health Connect permission launch exception: ${e.localizedMessage}")
-                    }
-                }
-            }
         }
     }
 
@@ -494,7 +488,7 @@ fun OpenKayakApp(
                                     coroutineScope.launch { pagerState.animateScrollToPage(2) }
                                 }
                             )
-                            2 -> HistoryScreen()
+                            2 -> HistoryScreen(healthConnectManager)
                             3 -> CircuitsScreen()
                             4 -> SettingsScreen(
                                 hrManager = hrManager,
@@ -1163,7 +1157,7 @@ fun MapScreen(
 }
 
 @Composable
-fun HistoryScreen() {
+fun HistoryScreen(healthConnectManager: HealthConnectManager) {
     val context = LocalContext.current
     val db = remember { KayakDatabase.getInstance(context) }
     val workoutList by db.workoutDao().getAllWorkouts().collectAsState(initial = emptyList())
@@ -1289,16 +1283,30 @@ fun HistoryScreen() {
                                     color = Color.White
                                 )
 
-                                Button(
-                                    onClick = {
-                                        scope.launch(Dispatchers.IO) {
-                                            db.workoutDao().deleteWorkout(item)
-                                        }
-                                    },
-                                    colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
-                                ) {
-                                    Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Button(
+                                        onClick = {
+                                            scope.launch(Dispatchers.IO) {
+                                                healthConnectManager.syncWorkout(item)
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF1565C0)),
+                                        modifier = Modifier.height(24.dp)
+                                    ) {
+                                        Text("HC", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Button(
+                                        onClick = {
+                                            scope.launch(Dispatchers.IO) {
+                                                db.workoutDao().deleteWorkout(item)
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
+                                        modifier = Modifier.size(22.dp)
+                                    ) {
+                                        Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
                                 }
                             }
                         }
