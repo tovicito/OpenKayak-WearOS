@@ -13,6 +13,7 @@ import androidx.health.connect.client.records.SpeedRecord
 import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
+import androidx.health.connect.client.units.kilocalories
 import androidx.health.connect.client.units.Length
 import androidx.health.connect.client.units.metersPerSecond
 import androidx.work.CoroutineWorker
@@ -55,8 +56,11 @@ class HealthConnectWorker(
             val end = Instant.ofEpochMilli(json.getLong("endTime"))
             val startOffset = ZoneOffset.systemDefault().rules.getOffset(start)
             val endOffset = ZoneOffset.systemDefault().rules.getOffset(end)
-            val baseMetadata = Metadata.autoRecorded(Device(type = Device.TYPE_WATCH))
-                .copy(clientRecordId = "openkayak-$id")
+            val baseMetadata = Metadata.activelyRecorded(
+                device = Device(type = Device.TYPE_WATCH),
+                clientRecordId = "openkayak-$id",
+                clientRecordVersion = 0
+            )
 
             val routeArray = JSONArray(json.optString("routeJson", "[]"))
             val locations = buildList {
@@ -95,7 +99,7 @@ class HealthConnectWorker(
                 ActiveCaloriesBurnedRecord(
                     startTime = start, startZoneOffset = startOffset,
                     endTime = end, endZoneOffset = endOffset,
-                    energy = Energy.kilocalories(json.optDouble("calories", 0.0))
+                    energy = json.optDouble("calories", 0.0).kilocalories
                 )
             )
 
@@ -110,7 +114,7 @@ class HealthConnectWorker(
                 records.add(HeartRateRecord(
                     startTime = start, startZoneOffset = startOffset,
                     endTime = end, endZoneOffset = endOffset,
-                    metadata = baseMetadata.copy(clientRecordId = "openkayak-$id-hr"),
+                    metadata = Metadata.activelyRecorded(Device(type = Device.TYPE_CHEST_STRAP), "openkayak-$id-hr", 0),
                     samples = samples
                 ))
             }
@@ -131,7 +135,7 @@ class HealthConnectWorker(
                 records.add(SpeedRecord(
                     startTime = start, startZoneOffset = startOffset,
                     endTime = end, endZoneOffset = endOffset,
-                    metadata = baseMetadata.copy(clientRecordId = "openkayak-$id-speed"),
+                    metadata = Metadata.activelyRecorded(Device(type = Device.TYPE_WATCH), "openkayak-$id-speed", 0),
                     samples = speedSamples
                 ))
             }
