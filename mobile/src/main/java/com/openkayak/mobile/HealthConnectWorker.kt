@@ -10,7 +10,6 @@ import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.SpeedRecord
-import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.kilocalories
@@ -118,7 +117,7 @@ class HealthConnectWorker(
                 records.add(HeartRateRecord(
                     startTime = start, startZoneOffset = startOffset,
                     endTime = end, endZoneOffset = endOffset,
-                    metadata = Metadata.autoRecorded(Device(type = Device.TYPE_CHEST_STRAP), "openkayak-$id-hr", 0),
+                    metadata = baseMetadata,
                     samples = samples
                 ))
             }
@@ -139,7 +138,7 @@ class HealthConnectWorker(
                 records.add(SpeedRecord(
                     startTime = start, startZoneOffset = startOffset,
                     endTime = end, endZoneOffset = endOffset,
-                    metadata = Metadata.autoRecorded(Device(type = Device.TYPE_WATCH), "openkayak-$id-speed", 0),
+                    metadata = baseMetadata,
                     samples = speedSamples
                 ))
             }
