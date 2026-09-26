@@ -210,43 +210,99 @@ private fun buildWorkoutSequences(
     }
 }
 
-private fun canonicalCycle(ids: List<Int>): Pair<String, List<Int>> {
-    if (ids.isEmpty()) return "" to emptyList()
-    val forward = ids.indices.map { start -> ids.drop(start) + ids.take(start) }
-    val reversedIds = ids.reversed()
-    val reverse = reversedIds.indices.map { start -> reversedIds.drop(start) + reversedIds.take(start) }
-    val best = (forward + reverse).minWithOrNull(compareBy<List<Int>> { it.joinToString(",") }) ?: ids
-    return best.joinToString("-") to best
+// Fast count of unique buoy IDs in a slice without set or list allocations
+private fun countUniqueBuoys(sequence: List<SequenceObservation>, start: Int, endExclusive: Int): Int {
+    var count = 0
+    for (i in start until endExclusive) {
+        val id = sequence[i].buoyId
+        var duplicate = false
+        for (j in start until i) {
+            if (sequence[j].buoyId == id) {
+                duplicate = true
+                break
+            }
+        }
+        if (!duplicate) count++
+    }
+    return count
+}
+
+// Optimized canonicalCycle that operates directly on SequenceObservation slice to eliminate intermediate object & string allocations
+private fun canonicalCycle(sequence: List<SequenceObservation>, startIdx: Int, endExclusive: Int): Pair<String, List<Int>> {
+    val length = endExclusive - startIdx
+    if (length <= 0) return "" to emptyList()
+
+    var bestStart = 0
+    var bestReversed = false
+
+    for (reversed in 0..1) {
+        val isRev = (reversed == 1)
+        for (rotStart in 0 until length) {
+            if (rotStart == 0 && !isRev) continue
+
+            var cmp = 0
+            for (i in 0 until length) {
+                val candIdx = if (!isRev) startIdx + (rotStart + i) % length else startIdx + (length - 1 - (rotStart + i) % length)
+                val bestIdx = if (!bestReversed) startIdx + (bestStart + i) % length else startIdx + (length - 1 - (bestStart + i) % length)
+                val candVal = sequence[candIdx].buoyId
+                val bestVal = sequence[bestIdx].buoyId
+                if (candVal != bestVal) {
+                    cmp = candVal.compareTo(bestVal)
+                    break
+                }
+            }
+            if (cmp < 0) {
+                bestStart = rotStart
+                bestReversed = isRev
+            }
+        }
+    }
+
+    val canonicalIds = ArrayList<Int>(length)
+    val sb = StringBuilder()
+    for (i in 0 until length) {
+        val seqIdx = if (!bestReversed) startIdx + (bestStart + i) % length else startIdx + (length - 1 - (bestStart + i) % length)
+        val id = sequence[seqIdx].buoyId
+        canonicalIds.add(id)
+        if (i > 0) sb.append('-')
+        sb.append(id)
+    }
+
+    return sb.toString() to canonicalIds
 }
 
 private fun collectCycleCandidates(
     sequences: List<List<SequenceObservation>>
 ): List<CycleCandidate> {
-    val grouped = mutableMapOf<String, MutableList<Pair<Int, List<SequenceObservation>>>>()
+    // Optimization: Store canonical buoy IDs alongside occurrences to avoid re-parsing signatures via String.split
+    val grouped = mutableMapOf<String, Pair<List<Int>, MutableList<Pair<Int, List<SequenceObservation>>>>>()
 
     for ((workoutIndex, sequence) in sequences.withIndex()) {
         if (sequence.size < MIN_CIRCUIT_BUOYS + 1) continue
         val seenKeys = mutableSetOf<String>()
 
         for (start in sequence.indices) {
-            for (end in (start + MIN_CIRCUIT_BUOYS)..minOf(sequence.lastIndex, start + MAX_CIRCUIT_BUOYS)) {
+            val maxEnd = minOf(sequence.lastIndex, start + MAX_CIRCUIT_BUOYS)
+            for (end in (start + MIN_CIRCUIT_BUOYS)..maxEnd) {
                 if (sequence[end].buoyId != sequence[start].buoyId) continue
-                val body = sequence.subList(start, end)
-                if (body.size !in MIN_CIRCUIT_BUOYS..MAX_CIRCUIT_BUOYS) continue
-                if (body.map { it.buoyId }.toSet().size < MIN_CIRCUIT_BUOYS) continue
+                val bodySize = end - start
+                if (bodySize !in MIN_CIRCUIT_BUOYS..MAX_CIRCUIT_BUOYS) continue
+                if (countUniqueBuoys(sequence, start, end) < MIN_CIRCUIT_BUOYS) continue
 
-                val (signature, canonicalIds) = canonicalCycle(body.map { it.buoyId })
+                val (signature, canonicalIds) = canonicalCycle(sequence, start, end)
                 if (seenKeys.add(signature)) {
-                    grouped.getOrPut(signature) { mutableListOf() } += workoutIndex to (body + sequence[end])
+                    val entry = grouped.getOrPut(signature) { canonicalIds to mutableListOf() }
+                    entry.second += workoutIndex to sequence.subList(start, end + 1)
                 }
                 if (canonicalIds.isEmpty()) break
             }
         }
     }
 
-    return grouped.mapNotNull { (signature, occurrences) ->
+    return grouped.mapNotNull { (signature, pair) ->
+        val (buoyIds, occurrences) = pair
         if (occurrences.size < MIN_BUOY_OCCURRENCES) return@mapNotNull null
-        CycleCandidate(signature, signature.split("-").map { it.toInt() }, occurrences, occurrences.size)
+        CycleCandidate(signature, buoyIds, occurrences, occurrences.size)
     }
 }
 
