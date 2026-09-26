@@ -27,27 +27,33 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Compile debug APK
-        run: ./gradlew --no-daemon assembleDebug
+        run: ./gradlew --no-daemon :app:assembleDebug :mobile:assembleDebug
 
-      - name: Verify APK exists
-        run: test -s app/build/outputs/apk/debug/app-debug.apk
+      - name: Verify APKs exist
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s mobile/build/outputs/apk/debug/mobile-debug.apk
 
       - name: Publish APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: openkayak-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            mobile/build/outputs/apk/debug/mobile-debug.apk
           if-no-files-found: error
           retention-days: 14
 
-      - name: Put compiled APK in repository root
-        run: cp app/build/outputs/apk/debug/app-debug.apk openkayak-debug.apk
+      - name: Put compiled APKs in repository root
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk openkayak-debug.apk
+          cp mobile/build/outputs/apk/debug/mobile-debug.apk openkayak-mobile-debug.apk
 
       - name: Commit compiled APK to this branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add openkayak-debug.apk
+          git add openkayak-debug.apk openkayak-mobile-debug.apk
           if git diff --cached --quiet; then
             echo "APK unchanged"
           else
