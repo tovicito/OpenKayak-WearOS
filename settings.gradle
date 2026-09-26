@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "OpenKayak"
-include(":app")
+include(":app", ":mobile")
