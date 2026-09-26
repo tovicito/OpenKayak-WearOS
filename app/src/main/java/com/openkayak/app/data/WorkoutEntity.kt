@@ -15,5 +15,6 @@ data class WorkoutEntity(
     val totalStrokes: Int = 0,
     val avgStrokeRateSpm: Int = 0,
     val estimatedCalories: Int,
-    val routeGpsJson: String
+    val routeGpsJson: String,
+    val heartRateJson: String = "[]"
 )
