@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
+    <uses-permission android:name="android.permission.health.WRITE_EXERCISE_ROUTE" />
+    <uses-permission android:name="android.permission.health.WRITE_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.WRITE_DISTANCE" />
+    <uses-permission android:name="android.permission.health.WRITE_SPEED" />
+    <uses-permission android:name="android.permission.health.WRITE_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.WRITE_ELEVATION_GAINED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application android:allowBackup="true" android:label="OpenKayak" android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <activity android:name=".MobileMainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+        <service android:name=".WearWorkoutListenerService" android:exported="true" android:permission="com.google.android.gms.wearable.BIND_LISTENER">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/openkayak/hc/workout/" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
