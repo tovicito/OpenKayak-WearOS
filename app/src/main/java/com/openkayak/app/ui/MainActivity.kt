@@ -922,7 +922,7 @@ fun DashboardScreen(
                         ) {
                             Icon(
                                 if (workoutState.isPaused) Icons.Default.PlayArrow else Icons.Default.Refresh,
-                                contentDescription = "PauseResume"
+                                contentDescription = if (workoutState.isPaused) "Reanudar" else "Pausar"
                             )
                         }
 
