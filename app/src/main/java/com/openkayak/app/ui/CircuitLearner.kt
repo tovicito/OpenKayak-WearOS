@@ -13,6 +13,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 data class LearnedCircuit(
     val id: Long,
@@ -98,9 +99,14 @@ fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double 
 }
 
 fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
-    val result = FloatArray(1)
-    Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, result)
-    return result[0]
+    val earthRadiusMeters = 6371000.0
+    val dLat = Math.toRadians(p2.latitude - p1.latitude)
+    val dLon = Math.toRadians(p2.longitude - p1.longitude)
+    val a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(Math.toRadians(p1.latitude)) * cos(Math.toRadians(p2.latitude)) *
+            sin(dLon / 2) * sin(dLon / 2)
+    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return (earthRadiusMeters * c).toFloat()
 }
 
 private fun bearingDegrees(a: GpsPoint, b: GpsPoint): Double {
