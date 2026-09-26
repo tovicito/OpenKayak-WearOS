@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - rebuild/wearos-stable
+      - feature/health-connect-sync
   workflow_dispatch:
 
 permissions:
