@@ -56,10 +56,10 @@ class HealthConnectWorker(
             val end = Instant.ofEpochMilli(json.getLong("endTime"))
             val startOffset = ZoneOffset.systemDefault().rules.getOffset(start)
             val endOffset = ZoneOffset.systemDefault().rules.getOffset(end)
-            val baseMetadata = Metadata.activelyRecorded(
-                device = Device(type = Device.TYPE_WATCH),
-                clientRecordId = "openkayak-$id",
-                clientRecordVersion = 0
+            val baseMetadata = Metadata.autoRecorded(
+                Device(type = Device.TYPE_WATCH),
+                "openkayak-$id",
+                0
             )
 
             val routeArray = JSONArray(json.optString("routeJson", "[]"))
@@ -67,11 +67,12 @@ class HealthConnectWorker(
                 for (i in 0 until routeArray.length()) {
                     val p = routeArray.getJSONObject(i)
                     add(
-                        ExerciseRoute.Location.Builder(
-                            Instant.ofEpochMilli(p.getLong("t")),
-                            p.getDouble("lat"),
-                            p.getDouble("lon")
-                        ).setAltitude(Length.meters(p.optDouble("alt", 0.0))).build()
+                        ExerciseRoute.Location(
+                        time = Instant.ofEpochMilli(p.getLong("t")),
+                        latitude = p.getDouble("lat"),
+                        longitude = p.getDouble("lon"),
+                        altitude = Length.meters(p.optDouble("alt", 0.0))
+                    )
                     )
                 }
             }
@@ -108,13 +109,16 @@ class HealthConnectWorker(
                 val samples = buildList {
                     for (i in 0 until hr.length()) {
                         val s = hr.getJSONObject(i)
-                        add(HeartRateRecord.Sample(s.getLong("bpm"), Instant.ofEpochMilli(s.getLong("t"))))
+                        add(HeartRateRecord.Sample(
+                            time = Instant.ofEpochMilli(s.getLong("t")),
+                            beatsPerMinute = s.getLong("bpm")
+                        ))
                     }
                 }
                 records.add(HeartRateRecord(
                     startTime = start, startZoneOffset = startOffset,
                     endTime = end, endZoneOffset = endOffset,
-                    metadata = Metadata.activelyRecorded(Device(type = Device.TYPE_CHEST_STRAP), "openkayak-$id-hr", 0),
+                    metadata = Metadata.autoRecorded(Device(type = Device.TYPE_CHEST_STRAP), "openkayak-$id-hr", 0),
                     samples = samples
                 ))
             }
@@ -125,8 +129,8 @@ class HealthConnectWorker(
                     val kmh = p.optDouble("speed", -1.0)
                     if (kmh >= 0.0) {
                         add(SpeedRecord.Sample(
-                            metersPerSecond(kmh / 3.6),
-                            Instant.ofEpochMilli(p.getLong("t"))
+                            time = Instant.ofEpochMilli(p.getLong("t")),
+                            speed = (kmh / 3.6).metersPerSecond
                         ))
                     }
                 }
@@ -135,7 +139,7 @@ class HealthConnectWorker(
                 records.add(SpeedRecord(
                     startTime = start, startZoneOffset = startOffset,
                     endTime = end, endZoneOffset = endOffset,
-                    metadata = Metadata.activelyRecorded(Device(type = Device.TYPE_WATCH), "openkayak-$id-speed", 0),
+                    metadata = Metadata.autoRecorded(Device(type = Device.TYPE_WATCH), "openkayak-$id-speed", 0),
                     samples = speedSamples
                 ))
             }
