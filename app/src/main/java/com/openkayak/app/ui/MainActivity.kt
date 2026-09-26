@@ -320,12 +320,6 @@ fun OpenKayakApp(
     val coroutineScope = rememberCoroutineScope()
     var permissionsGranted by remember { mutableStateOf(false) }
 
-    val healthConnectLauncher = rememberLauncherForActivityResult(
-        contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
-        // Health connect permission result
-    }
-
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
@@ -360,17 +354,6 @@ fun OpenKayakApp(
         if (permissionsGranted) {
             locationService?.startLocationUpdates()
             hrManager.startMonitoring()
-            if (healthConnectManager.healthConnectClient != null) {
-                coroutineScope.launch {
-                    try {
-                        if (!healthConnectManager.hasAllPermissions()) {
-                            healthConnectLauncher.launch(healthConnectManager.permissions)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("MainActivity", "Health Connect permission launch exception: ${e.localizedMessage}")
-                    }
-                }
-            }
         }
     }
 
