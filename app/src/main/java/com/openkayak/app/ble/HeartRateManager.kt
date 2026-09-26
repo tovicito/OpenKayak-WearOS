@@ -191,11 +191,26 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     }
 
     private fun handleMeasurement(g: BluetoothGatt, ch: BluetoothGattCharacteristic, data: ByteArray?) {
-        if (g != gatt || ch.uuid != HEART_RATE_MEASUREMENT_CHAR_UUID || data == null || data.size < 2) return
-        val flags = data[0].toInt() and 0xff
-        val bpm = if (flags and 1 == 0) data[1].toInt() and 0xff
-                  else if (data.size >= 3) (data[1].toInt() and 0xff) or ((data[2].toInt() and 0xff) shl 8)
-                  else return
+        if (g != gatt || ch.uuid != HEART_RATE_MEASUREMENT_CHAR_UUID || data == null) return
+        parseHeartRateMeasurement(data)
+    }
+
+    private fun parseHeartRateMeasurement(data: ByteArray) {
+        if (data.isEmpty()) return
+
+        val flags = data[0].toInt()
+        val is16Bit = (flags and 0x01) != 0
+
+        val bpm: Int = if (is16Bit) {
+            if (data.size >= 3) {
+                ((data[2].toInt() and 0xFF) shl 8) or (data[1].toInt() and 0xFF)
+            } else 0
+        } else {
+            if (data.size >= 2) {
+                data[1].toInt() and 0xFF
+            } else 0
+        }
+
         if (bpm !in 30..240) return
         lastMeasurement = System.currentTimeMillis()
         stopWatchSensor()
