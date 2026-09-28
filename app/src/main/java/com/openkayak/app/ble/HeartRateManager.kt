@@ -153,12 +153,13 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                 }
                 val value = if (notify) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                @Suppress("DEPRECATION")
                 try {
                     if (Build.VERSION.SDK_INT >= 33) {
                         g.writeDescriptor(cccd, value)
                     } else {
-                        @Suppress("DEPRECATION") cccd.value = value
-                        @Suppress("DEPRECATION") g.writeDescriptor(cccd)
+                        cccd.value = value
+                        g.writeDescriptor(cccd)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "CCCD write failed", e)
@@ -182,6 +183,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
 
         @Deprecated("Deprecated in API 33")
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            @Suppress("DEPRECATION")
             if (Build.VERSION.SDK_INT < 33) handleMeasurement(g, characteristic, characteristic.value?.copyOf())
         }
 
