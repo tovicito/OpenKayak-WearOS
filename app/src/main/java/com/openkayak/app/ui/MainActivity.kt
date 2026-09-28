@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -428,10 +428,7 @@ fun OpenKayakApp(
                 AmbientModeScreen(
                     workoutState = workoutState,
                     hrBpm = hrState.heartRateBpm,
-                    locationService = locationService,
-                    onExitAmbient = {
-                        inactivitySeconds = 0
-                    }
+                    locationService = locationService
                 )
             } else {
                 Box(
@@ -500,8 +497,7 @@ fun OpenKayakApp(
                                 hrManager = hrManager,
                                 hrState = hrState,
                                 mapDownloader = mapDownloader,
-                                downloadState = downloadState,
-                                healthConnectManager = healthConnectManager
+                                downloadState = downloadState
                             )
                         }
                     }
@@ -1478,8 +1474,7 @@ fun SettingsScreen(
     hrManager: HeartRateManager,
     hrState: com.openkayak.app.ble.BleHeartRateState,
     mapDownloader: MapTileDownloader,
-    downloadState: com.openkayak.app.service.DownloadState,
-    healthConnectManager: HealthConnectManager
+    downloadState: com.openkayak.app.service.DownloadState
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
@@ -1791,8 +1786,7 @@ fun SettingsScreen(
 fun AmbientModeScreen(
     workoutState: WorkoutState,
     hrBpm: Int,
-    locationService: LocationService?,
-    onExitAmbient: () -> Unit
+    locationService: LocationService?
 ) {
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()

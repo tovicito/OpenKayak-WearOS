@@ -56,7 +56,9 @@ class StrokeDetector(context: Context) : SensorEventListener {
         if (isTracking || linearAccSensor == null) return
         isTracking = true
         _strokeState.update { StrokeState() }
-        strokeTimestamps.clear()
+        synchronized(strokeTimestamps) {
+            strokeTimestamps.clear()
+        }
         lastStrokeTimestamp = 0L
         previousAcceleration = 0f
         isPeakArmed = true
@@ -109,7 +111,9 @@ class StrokeDetector(context: Context) : SensorEventListener {
         if (isPeakArmed && isLocalPeak && (now - lastStrokeTimestamp) > REFRACTORY_PERIOD_MS) {
             isPeakArmed = false
             lastStrokeTimestamp = now
-            strokeTimestamps.addLast(now)
+            synchronized(strokeTimestamps) {
+                strokeTimestamps.addLast(now)
+            }
 
             val spm = calculateSpm(now)
             _strokeState.update { current ->
@@ -127,10 +131,12 @@ class StrokeDetector(context: Context) : SensorEventListener {
 
     private fun calculateSpm(now: Long): Int {
         val tenSecondsAgo = now - 10_000L
-        while (strokeTimestamps.isNotEmpty() && strokeTimestamps.first() < tenSecondsAgo) {
-            strokeTimestamps.removeFirst()
+        val strokesInWindow = synchronized(strokeTimestamps) {
+            while (strokeTimestamps.isNotEmpty() && strokeTimestamps.first() < tenSecondsAgo) {
+                strokeTimestamps.removeFirst()
+            }
+            strokeTimestamps.size
         }
-        val strokesInWindow = strokeTimestamps.size
         return (strokesInWindow * 6).coerceIn(0, 180)
     }
 
