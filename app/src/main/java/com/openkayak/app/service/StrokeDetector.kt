@@ -78,7 +78,10 @@ class StrokeDetector(context: Context) : SensorEventListener {
 
         // Minimum speed requirement: must be moving at >= 0.5 km/h to count strokes
         if (currentSpeedKmh < MIN_SPEED_KMH) {
-            _strokeState.update { it.copy(strokeRateSpm = 0) }
+            // Optimization: avoid redundant StateFlow updates and object allocations at ~50Hz when already 0 SPM
+            if (_strokeState.value.strokeRateSpm != 0) {
+                _strokeState.update { it.copy(strokeRateSpm = 0) }
+            }
             return
         }
 
@@ -88,9 +91,9 @@ class StrokeDetector(context: Context) : SensorEventListener {
         val ay = event.values[1]
         val az = event.values[2]
 
-        val absAx = Math.abs(ax)
-        val absAy = Math.abs(ay)
-        val absAz = Math.abs(az)
+        val absAx = kotlin.math.abs(ax)
+        val absAy = kotlin.math.abs(ay)
+        val absAz = kotlin.math.abs(az)
 
         // Reject vertical stepping motion (walking/running):
         // Walking produces strong vertical Z accelerations relative to forward/horizontal thrust (Y/X).
@@ -99,8 +102,8 @@ class StrokeDetector(context: Context) : SensorEventListener {
             return
         }
 
-        // Horizontal forward paddle acceleration magnitude
-        val forwardAcc = sqrt((ax * ax + ay * ay).toDouble()).toFloat()
+        // Horizontal forward paddle acceleration magnitude (using inline float math to avoid double boxing)
+        val forwardAcc = kotlin.math.sqrt(ax * ax + ay * ay)
 
         val filteredAcc = previousAcceleration + 0.3f * (forwardAcc - previousAcceleration)
 
@@ -141,7 +144,10 @@ class StrokeDetector(context: Context) : SensorEventListener {
                 delay(1000L)
                 val now = System.currentTimeMillis()
                 val spm = calculateSpm(now)
-                _strokeState.update { it.copy(strokeRateSpm = spm) }
+                // Optimization: avoid redundant StateFlow updates if SPM has not changed
+                if (_strokeState.value.strokeRateSpm != spm) {
+                    _strokeState.update { it.copy(strokeRateSpm = spm) }
+                }
             }
         }
     }
