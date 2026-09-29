@@ -114,7 +114,7 @@ class MapTileDownloader(private val context: Context) {
                 Log.e(TAG, "Offline map download failed", t)
                 _state.value = DownloadState(
                     isDownloading = false,
-                    statusMessage = "No se pudo descargar el mapa: " + (t.message ?: "error desconocido")
+                    statusMessage = "No se pudo descargar el mapa. Inténtelo más tarde."
                 )
             }
         }
