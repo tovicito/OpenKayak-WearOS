@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -1775,6 +1775,31 @@ fun SettingsScreen(
 
             item {
                 Spacer(modifier = Modifier.height(6.dp))
+                Card(
+                    onClick = {},
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Health Connect",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Cyan
+                        )
+                        Text(
+                            text = if (healthConnectManager.healthConnectClient != null) "Sincronización activa" else "No disponible en este dispositivo",
+                            fontSize = 10.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = "OpenKayak Wear OS 5 v1.0",
                     fontSize = 10.sp,
@@ -1797,7 +1822,14 @@ fun AmbientModeScreen(
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onExitAmbient() })
+            }
+    ) {
         AndroidView(
             factory = { ctx ->
                 MapView(ctx).apply {
