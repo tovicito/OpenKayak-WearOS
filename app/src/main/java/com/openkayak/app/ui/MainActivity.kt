@@ -153,6 +153,10 @@ class MainActivity : ComponentActivity() {
 
         Configuration.getInstance().load(this, getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
         Configuration.getInstance().userAgentValue = packageName
+        // Security: Ensure osmdroid base path and tile cache use private internal app storage
+        val baseDir = getDir("osmdroid", Context.MODE_PRIVATE)
+        Configuration.getInstance().osmdroidBasePath = baseDir
+        Configuration.getInstance().osmdroidTileCache = java.io.File(baseDir, "tiles").apply { mkdirs() }
 
         hrManager = HeartRateManager(this)
         mapDownloader = MapTileDownloader(this)
@@ -1315,14 +1319,19 @@ fun parseJsonRoute(json: String): List<GpsPoint> {
         val array = org.json.JSONArray(json)
         for (i in 0 until array.length()) {
             val obj = array.getJSONObject(i)
-            points.add(
-                GpsPoint(
-                    latitude = obj.getDouble("lat"),
-                    longitude = obj.getDouble("lon"),
-                    altitude = 0.0,
-                    timestamp = 0L
+            val lat = obj.getDouble("lat")
+            val lon = obj.getDouble("lon")
+            // Security: Validate geographic coordinates to ensure finite bounds and prevent malformed data insertion
+            if (lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0) {
+                points.add(
+                    GpsPoint(
+                        latitude = lat,
+                        longitude = lon,
+                        altitude = 0.0,
+                        timestamp = 0L
+                    )
                 )
-            )
+            }
         }
     } catch (e: Exception) {}
     return points
