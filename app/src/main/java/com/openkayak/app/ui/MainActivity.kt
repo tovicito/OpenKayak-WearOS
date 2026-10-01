@@ -106,6 +106,8 @@ import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.json.JSONArray
+import org.json.JSONObject
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 
@@ -262,14 +264,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun pointsToJson(points: List<GpsPoint>): String {
-        val sb = StringBuilder("[")
-        for (i in points.indices) {
-            val p = points[i]
-            sb.append("{\"lat\":${p.latitude},\"lon\":${p.longitude}}")
-            if (i < points.size - 1) sb.append(",")
+        val array = JSONArray()
+        for (p in points) {
+            val obj = JSONObject()
+            obj.put("lat", p.latitude)
+            obj.put("lon", p.longitude)
+            array.put(obj)
         }
-        sb.append("]")
-        return sb.toString()
+        return array.toString()
     }
 
     private fun calculateCalories(durationSec: Long, avgBpm: Int): Int {
@@ -922,7 +924,7 @@ fun DashboardScreen(
                         ) {
                             Icon(
                                 if (workoutState.isPaused) Icons.Default.PlayArrow else Icons.Default.Refresh,
-                                contentDescription = "PauseResume"
+                                contentDescription = if (workoutState.isPaused) "Reanudar" else "Pausar"
                             )
                         }
 
@@ -1776,7 +1778,7 @@ fun SettingsScreen(
             item {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "OpenKayak Wear OS 5 v1.0",
+                    text = "OpenKayak Wear OS 5 v1.0.4",
                     fontSize = 10.sp,
                     color = Color.DarkGray,
                     textAlign = TextAlign.Center,

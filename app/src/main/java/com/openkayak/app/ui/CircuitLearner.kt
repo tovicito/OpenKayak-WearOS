@@ -98,9 +98,13 @@ fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double 
 }
 
 fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
-    val result = FloatArray(1)
-    Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, result)
-    return result[0]
+    val lat1 = Math.toRadians(p1.latitude)
+    val lat2 = Math.toRadians(p2.latitude)
+    val dLat = lat2 - lat1
+    val dLon = Math.toRadians(p2.longitude - p1.longitude)
+    val x = dLon * cos((lat1 + lat2) / 2.0)
+    val y = dLat
+    return (kotlin.math.sqrt(x * x + y * y) * 6371000.0).toFloat()
 }
 
 private fun bearingDegrees(a: GpsPoint, b: GpsPoint): Double {
@@ -496,7 +500,7 @@ suspend fun analyzeLearnedCircuits(context: Context, dbWorkouts: List<WorkoutEnt
             val previous = saved.firstOrNull { it.signature == candidate.signature }
             generated += LearnedCircuit(
                 id = previous?.id ?: stableCircuitId(candidate.signature),
-                name = previous?.name ?: "Circuito \${generated.size + 1} (\${buoys.size} boyas)",
+                name = previous?.name ?: "Circuito ${generated.size + 1} (${buoys.size} boyas)",
                 startLat = buoys.first().latitude,
                 startLon = buoys.first().longitude,
                 turnLat = buoys.first().latitude,
