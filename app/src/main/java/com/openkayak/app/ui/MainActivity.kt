@@ -262,14 +262,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun pointsToJson(points: List<GpsPoint>): String {
-        val sb = StringBuilder("[")
-        for (i in points.indices) {
-            val p = points[i]
-            sb.append("{\"lat\":${p.latitude},\"lon\":${p.longitude}}")
-            if (i < points.size - 1) sb.append(",")
+        val array = org.json.JSONArray()
+        for (p in points) {
+            if (p.latitude.isFinite() && p.longitude.isFinite() &&
+                p.latitude in -90.0..90.0 && p.longitude in -180.0..180.0
+            ) {
+                val obj = org.json.JSONObject()
+                obj.put("lat", p.latitude)
+                obj.put("lon", p.longitude)
+                array.put(obj)
+            }
         }
-        sb.append("]")
-        return sb.toString()
+        return array.toString()
     }
 
     private fun calculateCalories(durationSec: Long, avgBpm: Int): Int {
@@ -1311,22 +1315,31 @@ fun HistoryScreen() {
 
 fun parseJsonRoute(json: String): List<GpsPoint> {
     val points = mutableListOf<GpsPoint>()
+    if (json.isBlank()) return points
     try {
         val array = org.json.JSONArray(json)
         for (i in 0 until array.length()) {
             val obj = array.getJSONObject(i)
-            points.add(
-                GpsPoint(
-                    latitude = obj.getDouble("lat"),
-                    longitude = obj.getDouble("lon"),
-                    altitude = 0.0,
-                    timestamp = 0L
+            val lat = obj.optDouble("lat", Double.NaN)
+            val lon = obj.optDouble("lon", Double.NaN)
+            if (lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0) {
+                points.add(
+                    GpsPoint(
+                        latitude = lat,
+                        longitude = lon,
+                        altitude = 0.0,
+                        timestamp = 0L
+                    )
                 )
-            )
+            }
         }
-    } catch (e: Exception) {}
+    } catch (e: Exception) {
+        Log.e("MainActivity", "Error parsing GPS route JSON", e)
+    }
     return points
-}@Composable
+}
+
+@Composable
 fun CircuitsScreen() {
     val context = LocalContext.current
     val db = remember { KayakDatabase.getInstance(context) }
