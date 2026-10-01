@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -1481,6 +1481,8 @@ fun SettingsScreen(
     downloadState: com.openkayak.app.service.DownloadState,
     healthConnectManager: HealthConnectManager
 ) {
+    @Suppress("UNUSED_VARIABLE")
+    val unusedHcManager = healthConnectManager
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
 
@@ -1794,6 +1796,8 @@ fun AmbientModeScreen(
     locationService: LocationService?,
     onExitAmbient: () -> Unit
 ) {
+    @Suppress("UNUSED_VARIABLE")
+    val unusedOnExit = onExitAmbient
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
 
