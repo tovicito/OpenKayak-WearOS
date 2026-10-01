@@ -262,14 +262,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun pointsToJson(points: List<GpsPoint>): String {
-        val sb = StringBuilder("[")
-        for (i in points.indices) {
-            val p = points[i]
-            sb.append("{\"lat\":${p.latitude},\"lon\":${p.longitude}}")
-            if (i < points.size - 1) sb.append(",")
+        val array = org.json.JSONArray()
+        for (p in points) {
+            val obj = org.json.JSONObject()
+            obj.put("lat", p.latitude)
+            obj.put("lon", p.longitude)
+            array.put(obj)
         }
-        sb.append("]")
-        return sb.toString()
+        return array.toString()
     }
 
     private fun calculateCalories(durationSec: Long, avgBpm: Int): Int {
