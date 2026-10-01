@@ -64,6 +64,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -919,10 +921,13 @@ fun DashboardScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(36.dp)
+                                .semantics {
+                                    contentDescription = if (workoutState.isPaused) "Reanudar entrenamiento" else "Pausar entrenamiento"
+                                }
                         ) {
                             Icon(
                                 if (workoutState.isPaused) Icons.Default.PlayArrow else Icons.Default.Refresh,
-                                contentDescription = "PauseResume"
+                                contentDescription = null
                             )
                         }
 
@@ -1143,6 +1148,7 @@ fun MapScreen(
                 .padding(start = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Navegar a la pantalla anterior" }
         ) {
             Text("<", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1156,6 +1162,7 @@ fun MapScreen(
                 .padding(end = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Navegar a la pantalla siguiente" }
         ) {
             Text(">", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1216,6 +1223,7 @@ fun HistoryScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar mapa" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1296,7 +1304,9 @@ fun HistoryScreen() {
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar entrenamiento" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -1390,6 +1400,7 @@ fun CircuitsScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar mapa" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1460,7 +1471,9 @@ fun CircuitsScreen() {
                                         circuits = circuits.filterNot { it.id == circuit.id }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar recorrido" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
