@@ -77,8 +77,11 @@ class StrokeDetector(context: Context) : SensorEventListener {
         if (!isTracking || event == null) return
 
         // Minimum speed requirement: must be moving at >= 0.5 km/h to count strokes
+        // Optimization: Avoid redundant StateFlow updates at ~50-60Hz if SPM is already 0
         if (currentSpeedKmh < MIN_SPEED_KMH) {
-            _strokeState.update { it.copy(strokeRateSpm = 0) }
+            if (_strokeState.value.strokeRateSpm != 0) {
+                _strokeState.update { it.copy(strokeRateSpm = 0) }
+            }
             return
         }
 
@@ -88,9 +91,10 @@ class StrokeDetector(context: Context) : SensorEventListener {
         val ay = event.values[1]
         val az = event.values[2]
 
-        val absAx = Math.abs(ax)
-        val absAy = Math.abs(ay)
-        val absAz = Math.abs(az)
+        // Optimization: Use kotlin.math.abs for idiomatic inline float math
+        val absAx = kotlin.math.abs(ax)
+        val absAy = kotlin.math.abs(ay)
+        val absAz = kotlin.math.abs(az)
 
         // Reject vertical stepping motion (walking/running):
         // Walking produces strong vertical Z accelerations relative to forward/horizontal thrust (Y/X).
@@ -100,7 +104,8 @@ class StrokeDetector(context: Context) : SensorEventListener {
         }
 
         // Horizontal forward paddle acceleration magnitude
-        val forwardAcc = sqrt((ax * ax + ay * ay).toDouble()).toFloat()
+        // Optimization: Perform single-precision Float math directly without Double conversions or casts
+        val forwardAcc = sqrt(ax * ax + ay * ay)
 
         val filteredAcc = previousAcceleration + 0.3f * (forwardAcc - previousAcceleration)
 
