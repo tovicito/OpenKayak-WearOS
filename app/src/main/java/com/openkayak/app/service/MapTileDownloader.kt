@@ -112,9 +112,11 @@ class MapTileDownloader(private val context: Context) {
                 )
             } catch (t: Throwable) {
                 Log.e(TAG, "Offline map download failed", t)
+                // Security: Do not expose raw exception details (t.message) in the UI state
+                // to prevent potential leakage of sensitive file paths or internal system details.
                 _state.value = DownloadState(
                     isDownloading = false,
-                    statusMessage = "No se pudo descargar el mapa: " + (t.message ?: "error desconocido")
+                    statusMessage = "No se pudo descargar el mapa: error al iniciar la descarga"
                 )
             }
         }
