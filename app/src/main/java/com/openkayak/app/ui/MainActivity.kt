@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -1311,14 +1311,16 @@ fun HistoryScreen() {
 
 fun parseJsonRoute(json: String): List<GpsPoint> {
     val points = mutableListOf<GpsPoint>()
+    if (json.isBlank()) return points
     try {
-        val array = org.json.JSONArray(json)
-        for (i in 0 until array.length()) {
-            val obj = array.getJSONObject(i)
+        val regex = """\{"lat"\s*:\s*([0-9.-]+)\s*,\s*"lon"\s*:\s*([0-9.-]+)\}""".toRegex()
+        for (match in regex.findAll(json)) {
+            val lat = match.groupValues[1].toDoubleOrNull() ?: continue
+            val lon = match.groupValues[2].toDoubleOrNull() ?: continue
             points.add(
                 GpsPoint(
-                    latitude = obj.getDouble("lat"),
-                    longitude = obj.getDouble("lon"),
+                    latitude = lat,
+                    longitude = lon,
                     altitude = 0.0,
                     timestamp = 0L
                 )
@@ -1479,7 +1481,7 @@ fun SettingsScreen(
     hrState: com.openkayak.app.ble.BleHeartRateState,
     mapDownloader: MapTileDownloader,
     downloadState: com.openkayak.app.service.DownloadState,
-    healthConnectManager: HealthConnectManager
+    @Suppress("UNUSED_PARAMETER") healthConnectManager: HealthConnectManager
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
@@ -1792,7 +1794,7 @@ fun AmbientModeScreen(
     workoutState: WorkoutState,
     hrBpm: Int,
     locationService: LocationService?,
-    onExitAmbient: () -> Unit
+    @Suppress("UNUSED_PARAMETER") onExitAmbient: () -> Unit
 ) {
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
