@@ -40,6 +40,13 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         val HEART_RATE_SERVICE_UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
         val HEART_RATE_MEASUREMENT_CHAR_UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
         val CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+        fun maskAddress(address: String?): String {
+            if (address == null) return "null"
+            val parts = address.split(":")
+            if (parts.size != 6) return address
+            return "${parts[0]}:**:**:**:${parts[5]}"
+        }
     }
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -190,13 +197,19 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         }
     }
 
-    private fun handleMeasurement(g: BluetoothGatt, ch: BluetoothGattCharacteristic, data: ByteArray?) {
-        if (g != gatt || ch.uuid != HEART_RATE_MEASUREMENT_CHAR_UUID || data == null || data.size < 2) return
+    private fun parseHeartRateMeasurement(data: ByteArray?): Int? {
+        if (data == null || data.size < 2) return null
         val flags = data[0].toInt() and 0xff
         val bpm = if (flags and 1 == 0) data[1].toInt() and 0xff
                   else if (data.size >= 3) (data[1].toInt() and 0xff) or ((data[2].toInt() and 0xff) shl 8)
-                  else return
-        if (bpm !in 30..240) return
+                  else return null
+        if (bpm !in 30..240) return null
+        return bpm
+    }
+
+    private fun handleMeasurement(g: BluetoothGatt, ch: BluetoothGattCharacteristic, data: ByteArray?) {
+        if (g != gatt || ch.uuid != HEART_RATE_MEASUREMENT_CHAR_UUID) return
+        val bpm = parseHeartRateMeasurement(data) ?: return
         lastMeasurement = System.currentTimeMillis()
         stopWatchSensor()
         _hrState.update { it.copy(heartRateBpm = bpm, isPulseActive = true, isUsingInternalSensor = false) }
