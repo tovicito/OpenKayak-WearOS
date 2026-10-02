@@ -98,13 +98,9 @@ fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double 
 }
 
 fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
-    val lat1 = Math.toRadians(p1.latitude)
-    val lat2 = Math.toRadians(p2.latitude)
-    val dLat = lat2 - lat1
-    val dLon = Math.toRadians(p2.longitude - p1.longitude)
-    val meanLat = (lat1 + lat2) / 2.0
-    val x = dLon * cos(meanLat)
-    return (kotlin.math.sqrt(x * x + dLat * dLat) * 6371000.0).toFloat()
+    val result = FloatArray(1)
+    Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, result)
+    return result[0]
 }
 
 private fun bearingDegrees(a: GpsPoint, b: GpsPoint): Double {
