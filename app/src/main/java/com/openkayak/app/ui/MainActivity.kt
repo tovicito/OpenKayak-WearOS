@@ -1315,18 +1315,25 @@ fun parseJsonRoute(json: String): List<GpsPoint> {
         val array = org.json.JSONArray(json)
         for (i in 0 until array.length()) {
             val obj = array.getJSONObject(i)
-            points.add(
-                GpsPoint(
-                    latitude = obj.getDouble("lat"),
-                    longitude = obj.getDouble("lon"),
-                    altitude = 0.0,
-                    timestamp = 0L
+            if (obj.has("lat") && obj.has("lon")) {
+                points.add(
+                    GpsPoint(
+                        latitude = obj.getDouble("lat"),
+                        longitude = obj.getDouble("lon"),
+                        altitude = 0.0,
+                        timestamp = 0L
+                    )
                 )
-            )
+            }
         }
-    } catch (e: Exception) {}
+    } catch (e: Exception) {
+        Log.w("MainActivity", "Failed to parse GPS route JSON: ${e.localizedMessage}")
+        return emptyList()
+    }
     return points
-}@Composable
+}
+
+@Composable
 fun CircuitsScreen() {
     val context = LocalContext.current
     val db = remember { KayakDatabase.getInstance(context) }
