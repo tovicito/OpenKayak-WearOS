@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -1792,7 +1792,7 @@ fun AmbientModeScreen(
     workoutState: WorkoutState,
     hrBpm: Int,
     locationService: LocationService?,
-    onExitAmbient: () -> Unit
+    onExitAmbient: () -> Unit = {}
 ) {
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
