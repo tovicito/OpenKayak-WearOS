@@ -1,0 +1,3 @@
+## 2025-05-18 - High-Frequency Sensor Callback Allocation Overhead
+**Learning:** In sensor-driven apps running at high rates (e.g., 50Hz SensorEventListener callbacks on Wear OS), invoking `StateFlow.update { state.copy(...) }` on every event creates thousands of heap allocations per minute even when state values do not change. Because `copy()` instantiates a new data class instance before `MutableStateFlow` performs reference/value checks, memory churn and GC pauses occur on the sensor thread.
+**Action:** Guard high-frequency state updates with value inequality checks prior to calling `update`, or return the existing reference `it` inside the `update` block when values match.

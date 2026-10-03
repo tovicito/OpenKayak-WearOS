@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 data class StrokeState(
@@ -70,15 +71,19 @@ class StrokeDetector(context: Context) : SensorEventListener {
         isTracking = false
         decayTimerJob?.cancel()
         sensorManager?.unregisterListener(this)
-        _strokeState.update { it.copy(strokeRateSpm = 0) }
+        _strokeState.update { if (it.strokeRateSpm == 0) it else it.copy(strokeRateSpm = 0) }
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (!isTracking || event == null) return
 
-        // Minimum speed requirement: must be moving at >= 0.5 km/h to count strokes
+        // Minimum speed requirement: must be moving at >= 0.5 km/h to count strokes.
+        // Optimization: At ~50Hz sensor rate, guard against redundant StateFlow updates and object allocations
+        // when strokeRateSpm is already zero.
         if (currentSpeedKmh < MIN_SPEED_KMH) {
-            _strokeState.update { it.copy(strokeRateSpm = 0) }
+            if (_strokeState.value.strokeRateSpm != 0) {
+                _strokeState.update { if (it.strokeRateSpm == 0) it else it.copy(strokeRateSpm = 0) }
+            }
             return
         }
 
@@ -88,9 +93,10 @@ class StrokeDetector(context: Context) : SensorEventListener {
         val ay = event.values[1]
         val az = event.values[2]
 
-        val absAx = Math.abs(ax)
-        val absAy = Math.abs(ay)
-        val absAz = Math.abs(az)
+        // Use kotlin.math.abs for primitive Float directly
+        val absAx = abs(ax)
+        val absAy = abs(ay)
+        val absAz = abs(az)
 
         // Reject vertical stepping motion (walking/running):
         // Walking produces strong vertical Z accelerations relative to forward/horizontal thrust (Y/X).
@@ -100,7 +106,8 @@ class StrokeDetector(context: Context) : SensorEventListener {
         }
 
         // Horizontal forward paddle acceleration magnitude
-        val forwardAcc = sqrt((ax * ax + ay * ay).toDouble()).toFloat()
+        // Optimization: Use single-precision float sqrt directly to avoid double conversions 50x per sec
+        val forwardAcc = sqrt(ax * ax + ay * ay)
 
         val filteredAcc = previousAcceleration + 0.3f * (forwardAcc - previousAcceleration)
 
@@ -113,10 +120,14 @@ class StrokeDetector(context: Context) : SensorEventListener {
 
             val spm = calculateSpm(now)
             _strokeState.update { current ->
-                current.copy(
-                    strokeRateSpm = spm,
-                    totalStrokes = current.totalStrokes + 1
-                )
+                if (current.strokeRateSpm == spm) {
+                    current.copy(totalStrokes = current.totalStrokes + 1)
+                } else {
+                    current.copy(
+                        strokeRateSpm = spm,
+                        totalStrokes = current.totalStrokes + 1
+                    )
+                }
             }
         } else if (!isPeakArmed && filteredAcc < LOWER_THRESHOLD) {
             isPeakArmed = true
@@ -141,7 +152,10 @@ class StrokeDetector(context: Context) : SensorEventListener {
                 delay(1000L)
                 val now = System.currentTimeMillis()
                 val spm = calculateSpm(now)
-                _strokeState.update { it.copy(strokeRateSpm = spm) }
+                // Optimization: avoid heap allocation if SPM is unchanged
+                if (_strokeState.value.strokeRateSpm != spm) {
+                    _strokeState.update { if (it.strokeRateSpm == spm) it else it.copy(strokeRateSpm = spm) }
+                }
             }
         }
     }
