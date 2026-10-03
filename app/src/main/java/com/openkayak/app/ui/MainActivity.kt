@@ -311,7 +311,7 @@ fun OpenKayakApp(
 
     val healthConnectLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
+    ) { _ ->
         // Health connect permission result
     }
 
@@ -429,7 +429,7 @@ fun OpenKayakApp(
                     workoutState = workoutState,
                     hrBpm = hrState.heartRateBpm,
                     locationService = locationService,
-                    onExitAmbient = {
+                        _onExitAmbient = {
                         inactivitySeconds = 0
                     }
                 )
@@ -501,7 +501,7 @@ fun OpenKayakApp(
                                 hrState = hrState,
                                 mapDownloader = mapDownloader,
                                 downloadState = downloadState,
-                                healthConnectManager = healthConnectManager
+                                _healthConnectManager = healthConnectManager
                             )
                         }
                     }
@@ -1479,7 +1479,7 @@ fun SettingsScreen(
     hrState: com.openkayak.app.ble.BleHeartRateState,
     mapDownloader: MapTileDownloader,
     downloadState: com.openkayak.app.service.DownloadState,
-    healthConnectManager: HealthConnectManager
+    _healthConnectManager: HealthConnectManager
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("user_profile", Context.MODE_PRIVATE) }
@@ -1792,7 +1792,7 @@ fun AmbientModeScreen(
     workoutState: WorkoutState,
     hrBpm: Int,
     locationService: LocationService?,
-    onExitAmbient: () -> Unit
+    _onExitAmbient: () -> Unit
 ) {
     val trackPoints = locationService?.getTrackPoints() ?: emptyList()
     val activePoint = workoutState.currentPoint ?: trackPoints.lastOrNull()
