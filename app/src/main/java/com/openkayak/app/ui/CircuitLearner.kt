@@ -1,7 +1,6 @@
 package com.openkayak.app.ui
 
 import android.content.Context
-import android.location.Location
 import com.openkayak.app.data.WorkoutEntity
 import com.openkayak.app.service.GpsPoint
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +12,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 data class LearnedCircuit(
     val id: Long,
@@ -97,10 +97,17 @@ fun calculateTurnAngleDegrees(p1: GpsPoint, p2: GpsPoint, p3: GpsPoint): Double 
     return diff
 }
 
+/**
+ * Fast Equirectangular distance approximation in meters for local coordinates (< 100km).
+ * Replaces heavy Android framework Location.distanceBetween calls to eliminate FloatArray allocations
+ * and JNI/Vincenty calculation overhead during intensive circuit analysis loops.
+ */
 fun distanceBetweenMeters(p1: GpsPoint, p2: GpsPoint): Float {
-    val result = FloatArray(1)
-    Location.distanceBetween(p1.latitude, p1.longitude, p2.latitude, p2.longitude, result)
-    return result[0]
+    val latMid = Math.toRadians((p1.latitude + p2.latitude) * 0.5)
+    val dLat = Math.toRadians(p2.latitude - p1.latitude)
+    val dLon = Math.toRadians(p2.longitude - p1.longitude)
+    val x = dLon * cos(latMid)
+    return (sqrt(x * x + dLat * dLat) * 6371000.0).toFloat()
 }
 
 private fun bearingDegrees(a: GpsPoint, b: GpsPoint): Double {
