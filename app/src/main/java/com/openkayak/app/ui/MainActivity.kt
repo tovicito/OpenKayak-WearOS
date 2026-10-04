@@ -64,6 +64,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -899,7 +903,10 @@ fun DashboardScreen(
                             .height(36.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Start")
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = "Iniciar entrenamiento"
+                            )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("INICIAR", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
@@ -922,7 +929,7 @@ fun DashboardScreen(
                         ) {
                             Icon(
                                 if (workoutState.isPaused) Icons.Default.PlayArrow else Icons.Default.Refresh,
-                                contentDescription = "PauseResume"
+                                contentDescription = if (workoutState.isPaused) "Reanudar entrenamiento" else "Pausar entrenamiento"
                             )
                         }
 
@@ -968,6 +975,10 @@ fun TwoSecondLongPressButton(
 
     Box(
         modifier = modifier
+            .semantics {
+                role = Role.Button
+                contentDescription = "Guardar y finalizar entrenamiento (mantener pulsado 2 segundos)"
+            }
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xFFD50000))
             .pointerInput(Unit) {
@@ -1143,6 +1154,7 @@ fun MapScreen(
                 .padding(start = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Página anterior" }
         ) {
             Text("<", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1156,6 +1168,7 @@ fun MapScreen(
                 .padding(end = 4.dp)
                 .size(32.dp)
                 .clip(CircleShape)
+                .semantics { contentDescription = "Página siguiente" }
         ) {
             Text(">", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Color.Yellow)
         }
@@ -1216,6 +1229,7 @@ fun HistoryScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar mapa" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1296,7 +1310,9 @@ fun HistoryScreen() {
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar entrenamiento" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
@@ -1390,6 +1406,7 @@ fun CircuitsScreen() {
                         .padding(8.dp)
                         .size(32.dp)
                         .clip(CircleShape)
+                        .semantics { contentDescription = "Cerrar vista de recorrido" }
                 ) {
                     Text("X", color = Color.Yellow, fontWeight = FontWeight.Bold)
                 }
@@ -1460,7 +1477,9 @@ fun CircuitsScreen() {
                                         circuits = circuits.filterNot { it.id == circuit.id }
                                     },
                                     colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFD50000)),
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .semantics { contentDescription = "Eliminar recorrido" }
                                 ) {
                                     Text("X", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
