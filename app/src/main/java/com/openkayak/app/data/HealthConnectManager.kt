@@ -6,6 +6,8 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.metadata.Device
+import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.units.Length
 import java.time.Instant
 import java.time.ZoneOffset
@@ -42,9 +44,11 @@ class HealthConnectManager(private val context: Context) {
     suspend fun writeKayakWorkout(
         startTimeMillis: Long,
         endTimeMillis: Long,
-        distanceMeters: Float
-    ) {
-        val client = healthConnectClient ?: return
+        distanceMeters: Float,
+        clientRecordId: String = "openkayak-session-" + endTimeMillis
+    ): Boolean {
+        val client = healthConnectClient ?: return false
+        if (endTimeMillis <= startTimeMillis || !distanceMeters.isFinite() || distanceMeters < 0f) return false
 
         try {
             val startInstant = Instant.ofEpochMilli(startTimeMillis)
@@ -57,7 +61,11 @@ class HealthConnectManager(private val context: Context) {
                 endTime = endInstant,
                 endZoneOffset = ZoneOffset.UTC,
                 exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_PADDLING,
-                title = "Kayak OpenKayak"
+                title = "Piragüismo en OpenKayak-WearOS",
+                metadata = Metadata.activelyRecorded(
+                    clientRecordId = clientRecordId,
+                    device = Device(type = Device.TYPE_WATCH)
+                )
             )
 
             val distanceRecord = DistanceRecord(
@@ -65,13 +73,19 @@ class HealthConnectManager(private val context: Context) {
                 startZoneOffset = ZoneOffset.UTC,
                 endTime = endInstant,
                 endZoneOffset = ZoneOffset.UTC,
-                distance = Length.meters(distanceMeters.toDouble())
+                distance = Length.meters(distanceMeters.toDouble()),
+                metadata = Metadata.activelyRecorded(
+                    clientRecordId = clientRecordId + "-distance",
+                    device = Device(type = Device.TYPE_WATCH)
+                )
             )
 
             client.insertRecords(listOf(exerciseRecord, distanceRecord))
-            Log.d(TAG, "Successfully written Kayak session to Health Connect!")
+            Log.d(TAG, "Successfully written Kayak session to Health Connect")
+            return true
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to write Health Connect records: ${e.localizedMessage}")
+            Log.e(TAG, "Failed to write Health Connect records: ${e.localizedMessage}", e)
+            return false
         }
     }
 

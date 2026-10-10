@@ -1,0 +1,77 @@
+name: OpenKayak Wear OS · build and preview release
+
+on:
+  push:
+    branches:
+      - feat/2026-wearos-console-expressive
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Compile and verify Wear OS APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android 36 platform and build tools
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure Gradle wrapper is executable
+        run: chmod +x ./gradlew
+
+      - name: Run unit tests and compile debug and release variants
+        run: ./gradlew --no-daemon --stacktrace clean :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease
+
+      - name: Verify and rename APK
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s app/build/outputs/apk/release/app-release-unsigned.apk
+          cp app/build/outputs/apk/debug/app-debug.apk OpenKayak-WearOS.apk
+          sha256sum OpenKayak-WearOS.apk
+          ls -lh OpenKayak-WearOS.apk app/build/outputs/apk/release/app-release-unsigned.apk
+
+      - name: Upload debug-signed APK for installation and testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenKayak-WearOS-debug-apk
+          path: OpenKayak-WearOS.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish preview GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/2026-wearos-console-expressive'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2.0.0-preview.${{ github.run_number }}
+          name: OpenKayak Wear OS 2.0.0 · preview ${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: true
+          files: OpenKayak-WearOS.apk
+          body: |
+            Build automatizada de la rama `feat/2026-wearos-console-expressive`.
+
+            **Importante:** este APK está firmado con la clave de depuración de Android para pruebas. No es un binario firmado para publicación en Google Play. Probar en el Xiaomi Watch 2 Pro antes de usarlo en una sesión real de piragüismo.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
