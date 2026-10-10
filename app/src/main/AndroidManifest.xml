@@ -49,7 +49,7 @@
             android:value="true" />
 
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".ui.ConsoleActivity"
             android:exported="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.DeviceDefault">
