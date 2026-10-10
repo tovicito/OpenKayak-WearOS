@@ -24,7 +24,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import com.openkayak.app.ui.MainActivity
+import com.openkayak.app.ui.ConsoleActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -183,7 +183,7 @@ class LocationService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val notificationIntent = Intent(this, MainActivity::class.java).apply {
+        val notificationIntent = Intent(this, ConsoleActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
