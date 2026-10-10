@@ -63,6 +63,7 @@ class LocationService : Service() {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
     private var strokeDetector: StrokeDetector? = null
+    @Volatile private var deckMountedMode = false
 
     private var serviceJob = Job()
     private var serviceScope = CoroutineScope(Dispatchers.Default + serviceJob)
@@ -97,7 +98,7 @@ class LocationService : Service() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
         try {
-            strokeDetector = StrokeDetector(this)
+            strokeDetector = StrokeDetector(this).also { it.setDeckMountedMode(deckMountedMode) }
         } catch (e: Exception) {
             Log.e(TAG, "StrokeDetector init warning: ${e.localizedMessage}")
             strokeDetector = null
@@ -119,7 +120,12 @@ class LocationService : Service() {
             }
         }
 
-        startLocationUpdates()
+        // GPS is intentionally started only for an active workout, not while the UI is idle.
+    }
+
+    fun setDeckMountedMode(enabled: Boolean) {
+        deckMountedMode = enabled
+        strokeDetector?.setDeckMountedMode(enabled)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -239,6 +245,7 @@ class LocationService : Service() {
         startTimer()
 
         try {
+            strokeDetector?.setDeckMountedMode(deckMountedMode)
             strokeDetector?.start()
             observeStrokes()
         } catch (e: Exception) {
