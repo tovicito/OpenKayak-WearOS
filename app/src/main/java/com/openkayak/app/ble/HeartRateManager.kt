@@ -16,6 +16,8 @@ import java.util.UUID
 
 enum class BleConnectionState { DISCONNECTED, SCANNING, CONNECTING, CONNECTED }
 
+data class BleDeviceOption(val name: String, val address: String, val advertisesHeartRate: Boolean)
+
 data class BleHeartRateState(
     val connectionState: BleConnectionState = BleConnectionState.DISCONNECTED,
     val heartRateBpm: Int = 0,
@@ -24,7 +26,8 @@ data class BleHeartRateState(
     val preferredDeviceAddress: String? = null,
     val isPulseActive: Boolean = false,
     val isUsingInternalSensor: Boolean = false,
-    val hrNotificationsEnabled: Boolean = false
+    val hrNotificationsEnabled: Boolean = false,
+    val availableDevices: List<BleDeviceOption> = emptyList()
 )
 
 class HeartRateManager(private val context: Context) : SensorEventListener {
@@ -58,6 +61,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
     private var pulseJob: Job? = null
     private var targetAddress: String? = null
     private var autoReconnect = false
+    @Volatile private var externalOnly = false
     private var lastMeasurement = 0L
     private var watchSensorActive = false
 
@@ -74,11 +78,22 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
             val preferred = _hrState.value.preferredDeviceAddress
             val advertisesHr = services.any { it.uuid == HEART_RATE_SERVICE_UUID }
             val matchesPreferred = preferred?.equals(device.address, true) == true
-            // Some HR straps omit 0x180D from advertisements. If no preferred
-            // address exists, allow candidates through and validate them over GATT.
-            if (matchesPreferred || advertisesHr || preferred == null) {
+            if (matchesPreferred || advertisesHr) {
+                // Never attach automatically to headphones or other random BLE devices.
                 stopScan()
                 connectToDevice(device)
+            } else {
+                // Some straps omit 0x180D. Offer them for explicit user selection
+                // instead of repeatedly connecting to every nearby BLE device.
+                val candidate = BleDeviceOption(
+                    name = device.name?.takeIf { it.isNotBlank() } ?: "Dispositivo BLE",
+                    address = device.address,
+                    advertisesHeartRate = false
+                )
+                _hrState.update { state ->
+                    if (state.availableDevices.any { it.address == candidate.address }) state
+                    else state.copy(availableDevices = (state.availableDevices + candidate).take(12))
+                }
             }
         }
         override fun onScanFailed(errorCode: Int) {
@@ -226,7 +241,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         if (!bt.isEnabled) return
         autoReconnect = true
         stopScan()
-        _hrState.update { it.copy(connectionState = BleConnectionState.SCANNING) }
+        _hrState.update { it.copy(connectionState = BleConnectionState.SCANNING, availableDevices = emptyList()) }
         val scanner = bt.bluetoothLeScanner ?: return
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -254,6 +269,24 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         try { adapter?.bluetoothLeScanner?.stopScan(scanCallback) } catch (_: Exception) {}
         if (_hrState.value.connectionState == BleConnectionState.SCANNING) {
             _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED) }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connectToAddress(address: String) {
+        val device = try { adapter?.getRemoteDevice(address) } catch (_: Exception) { null }
+        if (device == null) return
+        stopScan()
+        connectToDevice(device)
+    }
+
+    fun setExternalOnly(enabled: Boolean) {
+        externalOnly = enabled
+        if (enabled) {
+            stopWatchSensor()
+            _hrState.update { it.copy(isUsingInternalSensor = false) }
+        } else if (_hrState.value.connectionState != BleConnectionState.CONNECTED) {
+            startWatchSensor()
         }
     }
 
@@ -295,7 +328,9 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
 
     @SuppressLint("MissingPermission")
     private fun handleDisconnect(g: BluetoothGatt) {
-        if (gatt == g) gatt = null
+        // A late callback from an obsolete GATT instance must not clear a newer connection.
+        if (gatt !== g) { try { g.close() } catch (_: Exception) {}; return }
+        gatt = null
         watchdogJob?.cancel()
         lastMeasurement = 0L
         try { g.disconnect(); g.close() } catch (_: Exception) {}
@@ -306,7 +341,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
                 hrNotificationsEnabled = false
             )
         }
-        startWatchSensor()
+        if (!externalOnly) startWatchSensor()
     }
 
     private fun scheduleReconnect() {
@@ -324,7 +359,7 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         }
     }
 
-    fun startMonitoring() { startWatchSensor() }
+    fun startMonitoring() { if (!externalOnly) startWatchSensor() }
 
     private fun startWatchSensor() {
         if (!watchSensorActive && watchSensor != null) {
@@ -361,8 +396,8 @@ class HeartRateManager(private val context: Context) : SensorEventListener {
         val old = gatt
         gatt = null
         try { old?.disconnect(); old?.close() } catch (_: Exception) {}
-        startWatchSensor()
-        _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED, heartRateBpm = 0, hrNotificationsEnabled = false) }
+        if (!externalOnly) startWatchSensor()
+        _hrState.update { it.copy(connectionState = BleConnectionState.DISCONNECTED, heartRateBpm = 0, hrNotificationsEnabled = false, isUsingInternalSensor = false) }
     }
 
     fun clearPreferredDevice() {
