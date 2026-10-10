@@ -34,6 +34,7 @@ class StrokeDetector(context: Context) : SensorEventListener {
     val strokeState: StateFlow<StrokeState> = _strokeState.asStateFlow()
 
     private var isTracking = false
+    @Volatile private var deckMountedMode = false
 
     private val scope = CoroutineScope(Dispatchers.Default + Job())
     private var decayTimerJob: Job? = null
@@ -51,6 +52,12 @@ class StrokeDetector(context: Context) : SensorEventListener {
 
     private var lastStrokeTimestamp = 0L
     private val strokeTimestamps = ArrayDeque<Long>()
+
+    fun setDeckMountedMode(enabled: Boolean) {
+        deckMountedMode = enabled
+        previousAcceleration = 0f
+        isPeakArmed = true
+    }
 
     fun start() {
         if (isTracking || linearAccSensor == null) return
@@ -95,18 +102,25 @@ class StrokeDetector(context: Context) : SensorEventListener {
         // Reject vertical stepping motion (walking/running):
         // Walking produces strong vertical Z accelerations relative to forward/horizontal thrust (Y/X).
         // If vertical upward motion dominates horizontal forward motion, ignore step impact.
-        if (absAz > (absAy + absAx) * 1.5f) {
+        if (!deckMountedMode && absAz > (absAy + absAx) * 1.5f) {
             return
         }
 
         // Horizontal forward paddle acceleration magnitude
-        val forwardAcc = sqrt((ax * ax + ay * ay).toDouble()).toFloat()
+        // In deck mode the sensor follows the hull, so use the full linear-acceleration
+        // magnitude and a lower provisional threshold. This is an estimate, not a calibrated paddle sensor.
+        val forwardAcc = if (deckMountedMode) {
+            sqrt((ax * ax + ay * ay + az * az).toDouble()).toFloat()
+        } else {
+            sqrt((ax * ax + ay * ay).toDouble()).toFloat()
+        }
+        val smoothing = if (deckMountedMode) 0.22f else 0.3f
+        val filteredAcc = previousAcceleration + smoothing * (forwardAcc - previousAcceleration)
+        val threshold = if (deckMountedMode) 0.85f else UPPER_THRESHOLD
+        val refractory = if (deckMountedMode) 450L else REFRACTORY_PERIOD_MS
+        val isLocalPeak = previousAcceleration > threshold && filteredAcc < previousAcceleration
 
-        val filteredAcc = previousAcceleration + 0.3f * (forwardAcc - previousAcceleration)
-
-        val isLocalPeak = previousAcceleration > UPPER_THRESHOLD && filteredAcc < previousAcceleration
-
-        if (isPeakArmed && isLocalPeak && (now - lastStrokeTimestamp) > REFRACTORY_PERIOD_MS) {
+        if (isPeakArmed && isLocalPeak && (now - lastStrokeTimestamp) > refractory) {
             isPeakArmed = false
             lastStrokeTimestamp = now
             strokeTimestamps.addLast(now)
