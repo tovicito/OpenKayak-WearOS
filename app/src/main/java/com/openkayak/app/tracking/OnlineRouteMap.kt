@@ -22,17 +22,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.URL
-import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.sinh
 
 private data class MapTile(val x: Int, val y: Int, val image: androidx.compose.ui.graphics.ImageBitmap)
+
+private object MapTileCache {
+    private val values = object : LinkedHashMap<String, androidx.compose.ui.graphics.ImageBitmap>(48, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, androidx.compose.ui.graphics.ImageBitmap>?): Boolean = size > 48
+    }
+    @Synchronized fun get(key: String) = values[key]
+    @Synchronized fun put(key: String, image: androidx.compose.ui.graphics.ImageBitmap) { values[key] = image }
+}
 
 @Composable
 fun OnlineRouteMap(
@@ -58,24 +63,25 @@ fun OnlineRouteMap(
         } else {
             mapStatus = "Cargando mapa online…"
             tiles = withContext(Dispatchers.IO) {
-                coroutineScope {
-                    (-1..1).flatMap { dx ->
-                        (-1..1).map { dy ->
-                            async {
-                                val tx = centerX + dx
-                                val ty = centerY + dy
-                                val bitmap = runCatching {
-                                    val connection = URL("https://tile.openstreetmap.org/$zoom/$tx/$ty.png").openConnection()
-                                    connection.connectTimeout = 2500
-                                    connection.readTimeout = 2500
-                                    connection.setRequestProperty("User-Agent", "OpenKayak-WearOS/2.1 (Wear OS kayaking app)")
-                                    connection.getInputStream().use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
-                                }.getOrNull()
-                                if (bitmap == null) null else MapTile(tx, ty, bitmap)
-                            }
-                        }
-                    }.awaitAll().filterNotNull()
+                val loaded = mutableListOf<MapTile>()
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        val tx = centerX + dx
+                        val ty = centerY + dy
+                        val key = "$zoom/$tx/$ty"
+                        val cached = MapTileCache.get(key)
+                        val bitmap = cached ?: runCatching {
+                            val connection = URL("https://tile.openstreetmap.org/$zoom/$tx/$ty.png").openConnection()
+                            connection.connectTimeout = 2500
+                            connection.readTimeout = 2500
+                            connection.setRequestProperty("User-Agent", "OpenKayak-WearOS/2.1 (Wear OS kayaking app)")
+                            connection.getInputStream().use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
+                        }.getOrNull()?.also { MapTileCache.put(key, it) }
+                        if (bitmap != null) loaded.add(MapTile(tx, ty, bitmap))
+                        if (cached == null) delay(600L)
+                    }
                 }
+                loaded
             }
             mapStatus = if (tiles.isEmpty()) "Sin conexión: mapa no disponible" else "Mapa OpenStreetMap · zoom $zoom"
         }
@@ -112,6 +118,8 @@ fun OnlineRouteMap(
         }
         if (tiles.isEmpty()) {
             Text(mapStatus, modifier = Modifier.align(Alignment.Center), color = Color.White, fontSize = 8.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium)
+        } else {
+            Text("© OpenStreetMap", modifier = Modifier.align(Alignment.BottomEnd), color = Color.White, fontSize = 6.sp)
         }
     }
 }
