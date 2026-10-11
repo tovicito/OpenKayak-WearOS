@@ -158,7 +158,9 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     fun checkHealthPermissions() {
         permissionScope.launch {
             if (!HealthConnectSync.isAvailable(context)) {
-                healthStatus = HealthConnectSync.unavailableMessage(context)
+                val reason = HealthConnectSync.unavailableMessage(context)
+                healthStatus = reason
+                Toast.makeText(context, reason, Toast.LENGTH_LONG).show()
                 return@launch
             }
             val granted = runCatching { HealthConnectSync.grantedPermissions(context) }.getOrDefault(emptySet())
@@ -225,7 +227,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                 Text("OPENKAYAK", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    listOf("EN EL AGUA", "TRAZADO GPS", "BANDA DE PULSO", "PALADAS", "BOYAS Y RUTAS", "HISTORIAL", "AJUSTES").getOrElse(page) { "OPENKAYAK" },
+                    listOf("EN EL AGUA", "TRAZADO GPS", "BANDA DE PULSO", "PALADAS", "BOYAS Y RUTAS", "AJUSTES", "HISTORIAL").getOrElse(page) { "OPENKAYAK" },
                     color = Quiet, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
                 Spacer(Modifier.height(5.dp))
@@ -267,8 +269,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                         savedBuoys = BuoyStore.all(context)
                     }
                 )
-                5 -> HistoryPage(context, isAmbient)
-                else -> SettingsPage(
+                5 -> SettingsPage(
                     context = context,
                     healthStatus = healthStatus,
                     isAmbient = isAmbient,
@@ -276,6 +277,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                     onSync = { enqueueSync(context) },
                     onExport = { exportGpx(context) }
                 )
+                else -> HistoryPage(context, isAmbient)
             }
         }
 
@@ -293,7 +295,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                 ) {
                     Text("¿Terminar sesión?", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(6.dp))
-                    Text("La ruta GPX se guardará y se intentará sincronizar con Health Connect.", color = Quiet, fontSize = 10.sp, textAlign = TextAlign.Center)
+                    Text("Se analizará el GPX para detectar giros y posibles circuitos. Después podrás guardar o borrar el resultado.", color = Quiet, fontSize = 10.sp, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         ActionPill("SEGUIR", Panel, Color.White, { showFinishConfirm = false }, Modifier.weight(1f))
@@ -316,7 +318,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
             )
         } else {
             Text(
-                listOf("● SESIÓN", "● GPS", "● BLE", "● PALADAS", "● BOYAS", "● HISTORIAL", "● SISTEMA").getOrElse(page) { "OPENKAYAK" },
+                listOf("● SESIÓN", "● GPS", "● BLE", "● PALADAS", "● BOYAS", "● AJUSTES", "● HISTORIAL").getOrElse(page) { "OPENKAYAK" },
                 color = Quiet, fontSize = 8.sp,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
             )
@@ -570,9 +572,7 @@ private fun BuoysPage(
         Text("${buoys.size} puntos guardados", color = Quiet, fontSize = 8.sp)
         if (!ambient) {
             Spacer(Modifier.height(5.dp))
-            Text("Los giros se detectan automáticamente con el GPS cuando hay movimiento y buena precisión.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(5.dp))
-            ActionPill("DESHACER ÚLTIMO", Panel2, Color.White, onUndo, Modifier.fillMaxWidth())
+            Text("Las boyas se infieren automáticamente del recorrido GPS al finalizar. Se guardan como circuito solo cuando lo eliges en el resumen.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
             Spacer(Modifier.height(5.dp))
             buoys.takeLast(3).reversed().forEach { buoy ->
                 Row(
@@ -592,7 +592,7 @@ private fun BuoysPage(
             }
         }
         if (snapshot.latitude == null) {
-            Text("Inicia GPS para guardar una boya en la posición actual.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
+            Text("Espera a recibir una posición GPS para analizar el trazado.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
         }
         Text("Las boyas se infieren del recorrido GPS, no por visión artificial. Al guardar un circuito se agrupan sus repeticiones.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
     }

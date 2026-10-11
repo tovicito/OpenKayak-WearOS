@@ -17,6 +17,7 @@ class PaddleDetector(
     private var initialized = false
     private var peakCount = 0
     private var lastPeakMs = Long.MIN_VALUE
+    private var lastPeakInterval = 0L
 
     fun reset() {
         baseline = 0f
@@ -25,6 +26,7 @@ class PaddleDetector(
         initialized = false
         peakCount = 0
         lastPeakMs = Long.MIN_VALUE
+        lastPeakInterval = 0L
     }
 
     fun onSample(x: Float, y: Float, z: Float, elapsedMs: Long): Boolean {
@@ -43,17 +45,22 @@ class PaddleDetector(
         if (!risingPeak) return false
         if (lastPeakMs != Long.MIN_VALUE) {
             val interval = elapsedMs - lastPeakMs
-            if (interval !in 350L..2_200L) {
-                peakCount = 0
+            if (interval !in 350L..2_200L ||
+                (lastPeakInterval > 0L && kotlin.math.abs(interval - lastPeakInterval) > maxOf(250L, lastPeakInterval * 45 / 100))) {
+                peakCount = 1
+                lastPeakInterval = 0L
                 lastPeakMs = elapsedMs
                 return false
             }
             peakCount++
+            lastPeakInterval = interval
         } else {
             peakCount = 1
+            lastPeakInterval = 0L
         }
         lastPeakMs = elapsedMs
-        if (peakCount < 2) return false
+        // Require three rhythmically consistent peaks, not a single bump or two arbitrary knocks.
+        if (peakCount < 3) return false
         if (lastStrokeMs != Long.MIN_VALUE && elapsedMs - lastStrokeMs < refractoryMs) return false
         lastStrokeMs = elapsedMs
         return true

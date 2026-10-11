@@ -284,6 +284,7 @@ class TrackService : Service(), LocationListener, SensorEventListener {
     override fun onLocationChanged(location: Location) {
         if (!TrackStore.recordLocation(this, location)) return
         val snapshot = TrackStore.snapshot(this)
+        TurnMemoryStore.rememberPoint(this, snapshot.startAt, GeoSample(location.latitude, location.longitude), location.time.takeIf { it > 0L } ?: System.currentTimeMillis(), if (location.hasAccuracy()) location.accuracy else 99f, snapshot.speedKmh)
         val prediction = turnModel.onGpsPoint(
             origin = TrackStore.sessionOrigin(this),
             point = GeoSample(location.latitude, location.longitude),

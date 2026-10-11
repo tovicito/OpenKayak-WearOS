@@ -34,7 +34,7 @@ class TurnAiModel {
         timestampMs: Long, elapsedRealtimeMs: Long
     ): TurnPrediction? {
         if (origin == null || timestampMs == lastInputTime) return null
-        if (lastInferenceElapsed != Long.MIN_VALUE && elapsedRealtimeMs - lastInferenceElapsed < 850L) return null
+        if (lastInferenceElapsed != Long.MIN_VALUE && elapsedRealtimeMs - lastInferenceElapsed < 1000L) return null
         lastInputTime = timestampMs
         lastInferenceElapsed = elapsedRealtimeMs
         window.add(Sample(point, timestampMs))
@@ -44,6 +44,7 @@ class TurnAiModel {
         val before = window[window.size - 5]
         val pivot = window[window.size - 3]
         val after = window.last()
+        if (distance(origin, pivot.point) < 8.0) return null
         val d1 = distance(before.point, pivot.point)
         val d2 = distance(pivot.point, after.point)
         if (d1 < 2.5 || d2 < 2.5) return null
@@ -109,6 +110,15 @@ private class SyntheticTurnClassifier private constructor(private val weights: A
 
 object TurnMemoryStore {
     private const val FILE = "openkayak-turn-memory.tsv"
+    private const val GPS_FILE = "openkayak-gps-memory.tsv"
+    @Synchronized fun rememberPoint(context: Context, sessionStart: Long, point: GeoSample, timestampMs: Long, accuracyM: Float, speedKmh: Double) {
+        if (sessionStart <= 0L || !point.latitude.isFinite() || !point.longitude.isFinite()) return
+        val line = listOf(sessionStart.toString(), timestampMs.toString(), String.format(Locale.US, "%.7f", point.latitude),
+            String.format(Locale.US, "%.7f", point.longitude), String.format(Locale.US, "%.2f", accuracyM),
+            String.format(Locale.US, "%.2f", speedKmh)).joinToString("\t") + "\n"
+        runCatching { File(context.filesDir, GPS_FILE).appendText(line) }
+    }
+
     @Synchronized fun remember(context: Context, sessionStart: Long, event: TurnPrediction) {
         if (sessionStart <= 0L) return
         val line = listOf(sessionStart.toString(), event.timestampMs.toString(),

@@ -87,6 +87,13 @@ object TrackStore {
             .apply()
     }
 
+    fun hasFreshAccurateGpsFix(context: Context, maxAgeMs: Long = 1800L): Boolean {
+        val p = prefs(context)
+        val last = p.getLong("last_gps_time", 0L)
+        val age = System.currentTimeMillis() - last
+        return last > 0L && age in 0L..maxAgeMs && p.getFloat("accuracy_m", Float.MAX_VALUE) in 0f..12f
+    }
+
     fun sessionOrigin(context: Context): GeoSample? {
         val p = prefs(context)
         val lat = p.getString("origin_lat", null)?.toDoubleOrNull() ?: return null
