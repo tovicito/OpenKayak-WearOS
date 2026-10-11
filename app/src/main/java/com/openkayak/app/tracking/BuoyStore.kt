@@ -30,6 +30,22 @@ object BuoyStore {
         return true
     }
 
+    fun saveAutomaticTurn(context: Context, latitude: Double, longitude: Double): Boolean {
+        if (!latitude.isFinite() || !longitude.isFinite() || latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return false
+        val items = all(context).toMutableList()
+        val nearby = items.any { item ->
+            if (!item.isTurn) false else {
+                val results = FloatArray(1)
+                android.location.Location.distanceBetween(latitude, longitude, item.latitude, item.longitude, results)
+                results[0] < 28f
+            }
+        }
+        if (nearby) return false
+        items.add(SavedBuoy(System.currentTimeMillis(), latitude, longitude, true))
+        save(context, items)
+        return true
+    }
+
     fun remove(context: Context, id: Long) {
         save(context, all(context).filterNot { it.id == id })
     }
