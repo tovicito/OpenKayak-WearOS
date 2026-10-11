@@ -1,0 +1,63 @@
+name: OpenKayak WearOS · build y pruebas
+
+on:
+  push:
+    branches:
+      - rebuild/wearos5-expressive-oct2026
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-test:
+    name: Compilar y probar (JDK 17 / Android 35)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar plataforma Android 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Comprobar Gradle
+        run: ./gradlew --version
+
+      - name: Pruebas unitarias y APK
+        run: ./gradlew --no-daemon clean testDebugUnitTest assembleDebug --stacktrace
+
+      - name: Publicar artefacto de compilación
+        uses: actions/upload-artifact@v4
+        with:
+          name: openkayak-wearos-preview-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Crear GitHub pre-release con el APK de pruebas
+        if: success() && github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: preview-${{ github.run_number }}-${{ github.sha }}
+          target_commitish: ${{ github.sha }}
+          name: OpenKayak WearOS · preview ${{ github.run_number }}
+          prerelease: true
+          draft: false
+          files: app/build/outputs/apk/debug/app-debug.apk
+          fail_on_unmatched_files: true
+          body: |
+            APK automático de pruebas de la rama de reconstrucción.
+            Es un APK debug instalable, no una versión final certificada ni una release firmada para Google Play.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
