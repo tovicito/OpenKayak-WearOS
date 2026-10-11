@@ -150,7 +150,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     fun checkHealthPermissions() {
         permissionScope.launch {
             if (!HealthConnectSync.isAvailable(context)) {
-                healthStatus = "Health Connect no está disponible"
+                healthStatus = HealthConnectSync.unavailableMessage(context)
                 return@launch
             }
             val granted = runCatching { HealthConnectSync.grantedPermissions(context) }.getOrDefault(emptySet())
