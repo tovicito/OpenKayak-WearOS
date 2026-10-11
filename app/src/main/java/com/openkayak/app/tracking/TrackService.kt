@@ -20,6 +20,8 @@ import android.location.GnssStatus
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
@@ -60,7 +62,9 @@ class TrackService : Service(), LocationListener, SensorEventListener {
     private var sensor: Sensor? = null
     private var usesLinearAcceleration = false
     private val paddleDetector = PaddleDetector()
-    private val turnModel = TurnAiModel()
+    private lateinit var aiThread: HandlerThread
+    private lateinit var aiHandler: Handler
+    private lateinit var turnModel: TurnAiModel
     private var elapsedBase = 0L
     private var segmentStartedElapsed = 0L
     private var ticker: Job? = null
@@ -82,6 +86,10 @@ class TrackService : Service(), LocationListener, SensorEventListener {
         super.onCreate()
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        aiThread = HandlerThread("OpenKayak-TurnAI").apply { start() }
+        aiHandler = Handler(aiThread.looper)
+        // Train the tiny classifier on its dedicated worker, never on the UI/location callback thread.
+        aiHandler.post { turnModel = TurnAiModel() }
         sensor = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         usesLinearAcceleration = sensor != null
         if (sensor == null) sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -97,7 +105,7 @@ class TrackService : Service(), LocationListener, SensorEventListener {
                     TrackStore.start(this)
                     elapsedBase = 0L
                     paddleDetector.reset()
-                    turnModel.reset()
+                    aiHandler.post { if (::turnModel.isInitialized) turnModel.reset() }
                     lastTurnLocation = null
                     previousTurnBearing = null
                     lastAutoTurnElapsed = 0L
@@ -284,16 +292,26 @@ class TrackService : Service(), LocationListener, SensorEventListener {
     override fun onLocationChanged(location: Location) {
         if (!TrackStore.recordLocation(this, location)) return
         val snapshot = TrackStore.snapshot(this)
-        TurnMemoryStore.rememberPoint(this, snapshot.startAt, GeoSample(location.latitude, location.longitude), location.time.takeIf { it > 0L } ?: System.currentTimeMillis(), if (location.hasAccuracy()) location.accuracy else 99f, snapshot.speedKmh)
-        val prediction = turnModel.onGpsPoint(
-            origin = TrackStore.sessionOrigin(this),
-            point = GeoSample(location.latitude, location.longitude),
-            accuracyM = if (location.hasAccuracy()) location.accuracy else 99f,
-            speedKmh = snapshot.speedKmh,
-            timestampMs = if (location.time > 0L) location.time else System.currentTimeMillis(),
-            elapsedRealtimeMs = SystemClock.elapsedRealtime()
-        )
-        if (prediction != null) TurnMemoryStore.remember(this, snapshot.startAt, prediction)
+        val sample = GeoSample(location.latitude, location.longitude)
+        val timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+        val accuracy = if (location.hasAccuracy()) location.accuracy else 99f
+        val speedKmh = snapshot.speedKmh
+        val sessionStart = snapshot.startAt
+        val elapsedRealtime = SystemClock.elapsedRealtime()
+        // Append point history and run at most one classifier inference per second off the UI thread.
+        aiHandler.post {
+            if (!::turnModel.isInitialized) return@post
+            TurnMemoryStore.rememberPoint(applicationContext, sessionStart, sample, timestamp, accuracy, speedKmh)
+            val prediction = turnModel.onGpsPoint(
+                origin = TrackStore.sessionOrigin(applicationContext),
+                point = sample,
+                accuracyM = accuracy,
+                speedKmh = speedKmh,
+                timestampMs = timestamp,
+                elapsedRealtimeMs = elapsedRealtime
+            )
+            if (prediction != null) TurnMemoryStore.remember(applicationContext, sessionStart, prediction)
+        }
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, buildNotification())
     }
 
@@ -344,6 +362,8 @@ class TrackService : Service(), LocationListener, SensorEventListener {
         serviceScope.cancel()
         unregisterGps()
         unregisterSensor()
+        if (::aiHandler.isInitialized) aiHandler.removeCallbacksAndMessages(null)
+        if (::aiThread.isInitialized) aiThread.quitSafely()
         super.onDestroy()
     }
 }
