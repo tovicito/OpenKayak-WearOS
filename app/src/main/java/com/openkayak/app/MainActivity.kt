@@ -609,8 +609,12 @@ private fun AmbientDashboard(s: TrackSnapshot, ble: BleHrState, points: List<Geo
                 longitude = s.longitude ?: points.lastOrNull()?.longitude, ambient = true, allowNetwork = false)
             Canvas(Modifier.fillMaxSize()) {
                 drawCircle(brush = Brush.radialGradient(
-                    colorStops = arrayOf(0.0f to Color.Transparent, 0.62f to Color.Transparent, 0.88f to Color(0xCC000000), 1.0f to Color.Black),
-                    center = center, radius = size.minDimension / 2f
+                    0.0f to Color.Transparent,
+                    0.62f to Color.Transparent,
+                    0.88f to Color(0xCC000000),
+                    1.0f to Color.Black,
+                    center = center,
+                    radius = size.minDimension / 2f
                 ), radius = size.minDimension / 2f)
             }
         }
