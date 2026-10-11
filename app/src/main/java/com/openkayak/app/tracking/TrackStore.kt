@@ -204,6 +204,15 @@ object TrackStore {
 
     fun finish(context: Context, elapsedMs: Long, endAt: Long = System.currentTimeMillis()) = synchronized(lock) {
         val p = prefs(context)
+        SessionHistoryStore.record(
+            context = context,
+            startAt = p.getLong("start_at", 0L),
+            endAt = endAt,
+            elapsedMs = elapsedMs,
+            distanceM = p.getFloat("distance_m", 0f).toDouble(),
+            strokes = p.getInt("strokes", 0),
+            trackPath = p.getString("track_file", null)
+        )
         p.edit().putBoolean("active", false).putBoolean("paused", false)
             .putLong("elapsed_ms", elapsedMs.coerceAtLeast(0L)).putLong("end_at", endAt).apply()
         val path = p.getString("track_file", null)
