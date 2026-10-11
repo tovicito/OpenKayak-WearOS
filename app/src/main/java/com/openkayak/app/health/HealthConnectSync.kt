@@ -20,11 +20,19 @@ object HealthConnectSync {
         HealthPermission.getWritePermission(HeartRateRecord::class)
     )
 
-    fun isAvailable(context: Context): Boolean = runCatching {
-        HealthConnectClient.getSdkStatus(
-            context, "com.google.android.apps.healthdata"
-        ) == HealthConnectClient.SDK_AVAILABLE
-    }.getOrDefault(false)
+    fun sdkStatus(context: Context): Int = runCatching {
+        HealthConnectClient.getSdkStatus(context, "com.google.android.apps.healthdata")
+    }.getOrDefault(HealthConnectClient.SDK_UNAVAILABLE)
+
+    fun isAvailable(context: Context): Boolean = sdkStatus(context) == HealthConnectClient.SDK_AVAILABLE
+
+    fun unavailableMessage(context: Context): String = when (sdkStatus(context)) {
+        HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED ->
+            "Health Connect necesita instalarse o actualizarse en el reloj"
+        HealthConnectClient.SDK_UNAVAILABLE ->
+            "Health Connect no está disponible en este reloj"
+        else -> "Health Connect no está listo; revisa la app Health Connect del reloj"
+    }
 
     fun client(context: Context): HealthConnectClient = HealthConnectClient.getOrCreate(context)
 
