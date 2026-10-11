@@ -2,7 +2,7 @@
 
 Aplicación independiente para piragüismo en español, orientada a Wear OS 5 y a un Xiaomi Watch 2 Pro montado en la cubierta de la piragua. Esta rama reinicia los archivos de aplicación y conserva el identificador `com.openkayak.app`.
 
-## Funciones de esta preview
+## Funciones de esta preview (compilación CI y pruebas unitarias correctas)
 
 - UI oscura de alto contraste basada en Wear Compose Material 3 Expressive, seis páginas y flechas laterales permanentes.
 - Dashboard de distancia, tiempo, velocidad y ritmo por kilómetro.
@@ -22,10 +22,10 @@ El botón de salida de AOD intenta reactivar el reloj, pero Wear OS puede requer
 
 ## Compilación local
 
-Requiere JDK 17 y Android SDK Platform 35:
+Requiere JDK 17 y Android SDK Platform 36 (AGP 8.9.1 / Gradle 8.11.1):
 
 ```bash
 ./gradlew --no-daemon clean testDebugUnitTest assembleDebug
 ```
 
-GitHub Actions ejecuta pruebas unitarias y genera un APK debug. Si ese trabajo termina correctamente, adjunta el APK a una GitHub pre-release de prueba. No es una compilación certificada libre de errores ni una release firmada para Google Play.
+GitHub Actions ejecuta pruebas unitarias y genera un APK debug. En compilaciones push correctas de esta rama, el flujo adjunta el APK a una GitHub pre-release de prueba. No es una compilación certificada libre de errores ni una release firmada para Google Play.
