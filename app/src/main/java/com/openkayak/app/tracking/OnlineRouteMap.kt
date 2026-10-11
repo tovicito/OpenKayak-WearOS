@@ -12,7 +12,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.drawImage
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -108,7 +107,7 @@ fun OnlineRouteMap(
                 fun screen(latP: Double, lonP: Double): Offset {
                     val x = (tileX(lonP, zoom) - worldX) * tileSize + size.width / 2f
                     val y = (tileY(latP, zoom) - worldY) * tileSize + size.height / 2f
-                    return Offset(x, y)
+                    return Offset(x.toFloat(), y.toFloat())
                 }
                 val track = points.map { screen(it.latitude, it.longitude) }
                 for (i in 1 until track.size) {
