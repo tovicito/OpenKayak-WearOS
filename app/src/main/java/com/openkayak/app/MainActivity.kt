@@ -54,6 +54,7 @@ import com.openkayak.app.health.HealthConnectSync
 import com.openkayak.app.health.SyncWorker
 import com.openkayak.app.tracking.BuoyStore
 import com.openkayak.app.tracking.GeoSample
+import com.openkayak.app.tracking.OnlineRouteMap
 import com.openkayak.app.tracking.SavedBuoy
 import com.openkayak.app.tracking.TrackService
 import com.openkayak.app.tracking.TrackSnapshot
@@ -82,6 +83,7 @@ private object BleManagerHolder {
 
 class MainActivity : ComponentActivity() {
     private var ambientMode by mutableStateOf(false)
+    private var ambientTick by mutableIntStateOf(0)
     private lateinit var ambientObserver: AmbientLifecycleObserver
     private var temporaryWakeLock: PowerManager.WakeLock? = null
 
@@ -91,7 +93,7 @@ class MainActivity : ComponentActivity() {
             override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
                 ambientMode = true
             }
-            override fun onUpdateAmbient() = Unit
+            override fun onUpdateAmbient() { ambientTick++ }
             override fun onExitAmbient() {
                 ambientMode = false
             }
@@ -99,7 +101,7 @@ class MainActivity : ComponentActivity() {
         lifecycle.addObserver(ambientObserver)
         setContent {
             WearMaterialTheme {
-                OpenKayakApp(isAmbient = ambientMode, onExitAmbient = { requestInteractiveMode() })
+                OpenKayakApp(isAmbient = ambientMode, ambientTick = ambientTick, onExitAmbient = { requestInteractiveMode() })
             }
         }
     }
@@ -127,7 +129,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun OpenKayakApp(isAmbient: Boolean, onExitAmbient: () -> Unit) {
+private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: () -> Unit) {
     val context = LocalContext.current
     val permissionScope = rememberCoroutineScope()
     var snapshot by remember { mutableStateOf(TrackStore.snapshot(context)) }
@@ -192,6 +194,8 @@ private fun OpenKayakApp(isAmbient: Boolean, onExitAmbient: () -> Unit) {
         }
     }
 
+    LaunchedEffect(ambientTick) { snapshot = TrackStore.snapshot(context) }
+
     LaunchedEffect(isAmbient) {
         while (true) {
             snapshot = TrackStore.snapshot(context)
@@ -210,7 +214,7 @@ private fun OpenKayakApp(isAmbient: Boolean, onExitAmbient: () -> Unit) {
                 Text("OPENKAYAK", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp)
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    listOf("EN EL AGUA", "TRAZADO GPS", "BANDA DE PULSO", "PALADAS", "BOYAS Y RUTAS", "AJUSTES").getOrElse(page) { "OPENKAYAK" },
+                    listOf("EN EL AGUA", "TRAZADO GPS", "BANDA DE PULSO", "PALADAS", "BOYAS Y RUTAS", "HISTORIAL", "AJUSTES").getOrElse(page) { "OPENKAYAK" },
                     color = Quiet, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
                 Spacer(Modifier.height(5.dp))
@@ -248,6 +252,7 @@ private fun OpenKayakApp(isAmbient: Boolean, onExitAmbient: () -> Unit) {
                         savedBuoys = BuoyStore.all(context)
                     }
                 )
+                5 -> HistoryPage(context, isAmbient)
                 else -> SettingsPage(
                     healthStatus = healthStatus,
                     isAmbient = isAmbient,
@@ -259,10 +264,10 @@ private fun OpenKayakApp(isAmbient: Boolean, onExitAmbient: () -> Unit) {
         }
 
         ArrowControl("‹", Modifier.align(Alignment.CenterStart).padding(start = 2.dp), isAmbient) {
-            page = (page + 5) % 6
+            page = (page + 6) % 7
         }
         ArrowControl("›", Modifier.align(Alignment.CenterEnd).padding(end = 2.dp), isAmbient) {
-            page = (page + 1) % 6
+            page = (page + 1) % 7
         }
 
         if (showFinishConfirm && !isAmbient) {
@@ -297,7 +302,7 @@ private fun OpenKayakApp(isAmbient: Boolean, onExitAmbient: () -> Unit) {
             )
         } else {
             Text(
-                listOf("● SESIÓN", "● GPS", "● BLE", "● PALADAS", "● BOYAS", "● SISTEMA").getOrElse(page) { "OPENKAYAK" },
+                listOf("● SESIÓN", "● GPS", "● BLE", "● PALADAS", "● BOYAS", "● HISTORIAL", "● SISTEMA").getOrElse(page) { "OPENKAYAK" },
                 color = Quiet, fontSize = 8.sp,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
             )
@@ -423,39 +428,13 @@ private fun RoutePage(s: TrackSnapshot, points: List<GeoSample>, buoys: List<Sav
                 .background(if (ambient) Color.Black else Panel)
                 .border(1.dp, if (ambient) Color(0xFF333333) else Color(0xFF273A46), RoundedCornerShape(22.dp))
         ) {
-            Canvas(Modifier.fillMaxSize().padding(9.dp)) {
-                val all = points.map { it.latitude to it.longitude } + buoys.map { it.latitude to it.longitude }
-                val cellX = size.width / 4f
-                val cellY = size.height / 4f
-                for (i in 1..3) {
-                    drawLine(Color(0xFF21303A), Offset(cellX * i, 0f), Offset(cellX * i, size.height), 1f)
-                    drawLine(Color(0xFF21303A), Offset(0f, cellY * i), Offset(size.width, cellY * i), 1f)
-                }
-                if (all.isNotEmpty()) {
-                    val minLat = all.minOf { it.first }
-                    val maxLat = all.maxOf { it.first }
-                    val minLon = all.minOf { it.second }
-                    val maxLon = all.maxOf { it.second }
-                    val dx = (maxLon - minLon).coerceAtLeast(0.00001)
-                    val dy = (maxLat - minLat).coerceAtLeast(0.00001)
-                    fun mapPoint(lat: Double, lon: Double) = Offset(
-                        (((lon - minLon) / dx) * size.width.toDouble()).toFloat(),
-                        (size.height - (((lat - minLat) / dy) * size.height.toDouble())).toFloat()
-                    )
-                    val track = points.map { mapPoint(it.latitude, it.longitude) }
-                    for (i in 1 until track.size) drawLine(if (ambient) Color.White else Ice, track[i - 1], track[i], 3.2f, cap = StrokeCap.Round)
-                    val routePoints = buoys.filterNot { it.isTurn }.sortedBy { it.id }.map { mapPoint(it.latitude, it.longitude) }
-                    for (i in 1 until routePoints.size) drawLine(if (ambient) Color.LightGray else Mint, routePoints[i - 1], routePoints[i], 2.5f, cap = StrokeCap.Round)
-                    buoys.forEach { b ->
-                        drawCircle(if (b.isTurn) Pink else Mint, radius = if (b.isTurn) 4.2f else 3.5f, center = mapPoint(b.latitude, b.longitude))
-                    }
-                    if (track.isNotEmpty()) drawCircle(Color.White, radius = 3.2f, center = track.last())
-                }
-            }
-            if (points.size < 2 && buoys.isEmpty()) {
-                Text("Empieza una sesión para dibujar la ruta", color = Quiet, fontSize = 9.sp, textAlign = TextAlign.Center,
-                    modifier = Modifier.align(Alignment.Center))
-            }
+            OnlineRouteMap(
+                points = points,
+                buoys = buoys,
+                latitude = s.latitude,
+                longitude = s.longitude,
+                ambient = ambient
+            )
         }
         Spacer(Modifier.height(7.dp))
         Text(s.gpsStatus, color = if (ambient) Color.LightGray else Ice, fontSize = 10.sp, textAlign = TextAlign.Center)
@@ -467,8 +446,8 @@ private fun RoutePage(s: TrackSnapshot, points: List<GeoSample>, buoys: List<Sav
                 color = Color.White, fontSize = 10.sp, textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(4.dp))
-        Text("Cian: trazado · Rosa: boyas de giro · Verde: puntos de ruta", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
-        Text("Vista de trazado sin cartografía raster; guarda mapas fuera de esta versión.", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
+        Text("Mapa online · cian: recorrido · rosa: giros detectados · verde: puntos guardados", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
+        Text("El mapa necesita conexión a Internet; el trazado GPS se guarda localmente.", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
     }
 }
 
@@ -534,10 +513,8 @@ private fun BuoysPage(
         Text("${buoys.size} puntos guardados", color = Quiet, fontSize = 8.sp)
         if (!ambient) {
             Spacer(Modifier.height(5.dp))
-            ActionPill("＋ BOYA DE GIRO ROSA", Color(0xFF48242F), Pink, onSaveTurn, Modifier.fillMaxWidth())
-            Spacer(Modifier.height(4.dp))
-            ActionPill("＋ PUNTO DE RUTA VERDE", Color(0xFF173B32), Mint, onSaveRoute, Modifier.fillMaxWidth())
-            Spacer(Modifier.height(4.dp))
+            Text("Los giros se detectan automáticamente con el GPS cuando hay movimiento y buena precisión.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(5.dp))
             ActionPill("DESHACER ÚLTIMO", Panel2, Color.White, onUndo, Modifier.fillMaxWidth())
             Spacer(Modifier.height(5.dp))
             buoys.takeLast(3).reversed().forEach { buoy ->
@@ -549,7 +526,7 @@ private fun BuoysPage(
                     StatusDot(true, false)
                     Spacer(Modifier.width(4.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (buoy.isTurn) "BOYA DE GIRO" else "PUNTO DE RUTA", color = if (buoy.isTurn) Pink else Mint, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(if (buoy.isTurn) "GIRO GPS" else "PUNTO DE RUTA", color = if (buoy.isTurn) Pink else Mint, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         Text(String.format(Locale.US, "%.4f, %.4f", buoy.latitude, buoy.longitude), color = Quiet, fontSize = 7.sp)
                     }
                     Text("×", color = Pink, fontSize = 18.sp, modifier = Modifier.clickable { onDelete(buoy.id) }.padding(horizontal = 4.dp))
@@ -560,7 +537,7 @@ private fun BuoysPage(
         if (snapshot.latitude == null) {
             Text("Inicia GPS para guardar una boya en la posición actual.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
         }
-        Text("Las boyas quedan guardadas localmente. Esta versión no aprende todavía circuitos repetidos automáticamente.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
+        Text("Son giros inferidos, no reconocimiento visual de boyas físicas. Se guardan localmente.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
     }
 }
 
