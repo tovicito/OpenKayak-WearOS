@@ -22,7 +22,7 @@ object HealthConnectSync {
 
     fun isAvailable(context: Context): Boolean = runCatching {
         HealthConnectClient.getSdkStatus(
-            context, HealthConnectClient.DEFAULT_PROVIDER_PACKAGE_NAME
+            context, "com.google.android.apps.healthdata"
         ) == HealthConnectClient.SDK_AVAILABLE
     }.getOrDefault(false)
 
