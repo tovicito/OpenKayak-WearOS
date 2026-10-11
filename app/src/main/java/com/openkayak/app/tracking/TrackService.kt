@@ -60,6 +60,7 @@ class TrackService : Service(), LocationListener, SensorEventListener {
     private var sensor: Sensor? = null
     private var usesLinearAcceleration = false
     private val paddleDetector = PaddleDetector()
+    private val turnModel = TurnAiModel()
     private var elapsedBase = 0L
     private var segmentStartedElapsed = 0L
     private var ticker: Job? = null
@@ -96,6 +97,7 @@ class TrackService : Service(), LocationListener, SensorEventListener {
                     TrackStore.start(this)
                     elapsedBase = 0L
                     paddleDetector.reset()
+                    turnModel.reset()
                     lastTurnLocation = null
                     previousTurnBearing = null
                     lastAutoTurnElapsed = 0L
@@ -155,9 +157,18 @@ class TrackService : Service(), LocationListener, SensorEventListener {
                 TrackStore.setGpsStatus(this, "Activa la ubicación del reloj")
             } else {
                 locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, Looper.getMainLooper())
+                if (runCatching { locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false)) {
+                    runCatching { locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 0f, this, Looper.getMainLooper()) }
+                }
                 runCatching { locationManager.registerGnssStatusCallback(gnssCallback, android.os.Handler(Looper.getMainLooper())) }
                 gpsRegistered = true
-                TrackStore.setGpsStatus(this, "Buscando satélites; sal al exterior para fijar señal")
+                TrackStore.setGpsStatus(this, "Buscando señal GNSS · espera al aire libre")
+                runCatching {
+                    val now = System.currentTimeMillis()
+                    val cached = listOfNotNull(locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER), locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER))
+                        .filter { now - it.time in 0L..60_000L && (!it.hasAccuracy() || it.accuracy <= 45f) }.maxByOrNull { it.time }
+                    if (TrackStore.snapshot(this).latitude == null && cached != null) onLocationChanged(cached)
+                }
             }
         } catch (_: SecurityException) {
             TrackStore.setGpsStatus(this, "Permiso de ubicación denegado")
@@ -189,7 +200,9 @@ class TrackService : Service(), LocationListener, SensorEventListener {
         ticker?.cancel()
         ticker = serviceScope.launch {
             while (isActive) {
-                val paused = TrackStore.snapshot(this@TrackService).paused
+                val live = TrackStore.snapshot(this@TrackService)
+                val paused = live.paused
+                if (!paused && live.active && !gpsRegistered) registerGps()
                 val elapsed = if (paused) elapsedBase else
                     elapsedBase + (SystemClock.elapsedRealtime() - segmentStartedElapsed).coerceAtLeast(0L)
                 TrackStore.setElapsed(this@TrackService, elapsed)
@@ -228,15 +241,14 @@ class TrackService : Service(), LocationListener, SensorEventListener {
         if (current.active) {
             val elapsed = if (current.paused) elapsedBase else
                 elapsedBase + (SystemClock.elapsedRealtime() - segmentStartedElapsed).coerceAtLeast(0L)
+            val sessionStart = current.startAt
+            val routePath = current.trackFilePath
             TrackStore.finish(this, elapsed)
+            val finished = TrackStore.snapshot(this)
+            SessionReviewStore.prepare(this, sessionStart, System.currentTimeMillis(), elapsed, finished.distanceM, finished.strokes, routePath)
             unregisterGps()
             unregisterSensor()
             ticker?.cancel()
-            val request = OneTimeWorkRequestBuilder<SyncWorker>()
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-                .build()
-            WorkManager.getInstance(applicationContext)
-                .enqueueUniqueWork(SyncWorker.UNIQUE_NAME, ExistingWorkPolicy.REPLACE, request)
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -270,41 +282,18 @@ class TrackService : Service(), LocationListener, SensorEventListener {
     }
 
     override fun onLocationChanged(location: Location) {
-        if (TrackStore.recordLocation(this, location)) {
-            detectAutomaticTurn(location)
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, buildNotification())
-        }
-    }
-
-    private fun detectAutomaticTurn(location: Location) {
+        if (!TrackStore.recordLocation(this, location)) return
         val snapshot = TrackStore.snapshot(this)
-        if ((location.hasAccuracy() && location.accuracy > 20f) || snapshot.speedKmh < 2.5) {
-            lastTurnLocation = location
-            previousTurnBearing = null
-            return
-        }
-        val previous = lastTurnLocation
-        if (previous != null) {
-            val distance = previous.distanceTo(location)
-            if (distance >= 8f) {
-                val bearing = previous.bearingTo(location)
-                val oldBearing = previousTurnBearing
-                if (oldBearing != null) {
-                    val delta = kotlin.math.abs(((bearing - oldBearing + 540f) % 360f) - 180f)
-                    val now = SystemClock.elapsedRealtime()
-                    if (delta >= 55f && now - lastAutoTurnElapsed >= 45_000L) {
-                        if (BuoyStore.saveAutomaticTurn(this, previous.latitude, previous.longitude)) {
-                            lastAutoTurnElapsed = now
-                        }
-                    }
-                }
-                previousTurnBearing = bearing
-                lastTurnLocation = location
-            }
-        } else {
-            lastTurnLocation = location
-        }
+        val prediction = turnModel.onGpsPoint(
+            origin = TrackStore.sessionOrigin(this),
+            point = GeoSample(location.latitude, location.longitude),
+            accuracyM = if (location.hasAccuracy()) location.accuracy else 99f,
+            speedKmh = snapshot.speedKmh,
+            timestampMs = if (location.time > 0L) location.time else System.currentTimeMillis(),
+            elapsedRealtimeMs = SystemClock.elapsedRealtime()
+        )
+        if (prediction != null) TurnMemoryStore.remember(this, snapshot.startAt, prediction)
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, buildNotification())
     }
 
     override fun onProviderEnabled(provider: String) {
@@ -326,7 +315,7 @@ class TrackService : Service(), LocationListener, SensorEventListener {
         if (!state.active || state.paused) return
         // A deck-mounted watch vibrates even when the kayak is still. Never count strokes
         // unless GPS confirms sustained movement; reset the detector while stationary.
-        if (state.speedKmh < 2.5) {
+        if (state.speedKmh < 3.5 || state.accuracyM !in 0f..12f) {
             paddleDetector.reset()
             return
         }

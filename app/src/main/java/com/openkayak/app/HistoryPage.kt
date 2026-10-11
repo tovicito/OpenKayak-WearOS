@@ -49,6 +49,8 @@ fun HistoryPage(context: Context, ambient: Boolean) {
                     Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, Locale.getDefault()).format(Date(s.startAt)), color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                     Text(String.format(Locale.getDefault(), "%.2f km · %s", s.distanceM / 1000.0, duration(s.elapsedMs)), color = Color(0xFF76F4D0), fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
                     Text("${s.strokes} paladas · ${if (s.trackPath.isNotBlank()) "GPX guardado" else "sin GPX"}", color = Color(0xFF8D9DA8), fontSize = 8.sp)
+                    Text("FC med " + (s.averageBpm.takeIf { it > 0 }?.toString() ?: "--") + " · máx " + (s.maxBpm.takeIf { it > 0 }?.toString() ?: "--") + " · mín " + (s.minBpm.takeIf { it > 0 }?.toString() ?: "--"), color = Color(0xFF9FD9FF), fontSize = 7.sp)
+                    Text(s.calories.toString() + " kcal estimadas", color = Color(0xFF8D9DA8), fontSize = 7.sp)
                 }
             }
         }

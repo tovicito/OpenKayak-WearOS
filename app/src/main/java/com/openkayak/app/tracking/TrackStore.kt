@@ -77,12 +77,21 @@ object TrackStore {
             .putLong("start_at", start)
             .putLong("end_at", 0L)
             .putString("track_file", file.absolutePath)
+            .putString("origin_lat", "")
+            .putString("origin_lon", "")
             .putString("recent_points", "")
             .putString("stroke_times", "")
             .putString("hr_samples", "")
             .putLong("last_gps_time", 0L)
             .putBoolean("gpx_closed", false)
             .apply()
+    }
+
+    fun sessionOrigin(context: Context): GeoSample? {
+        val p = prefs(context)
+        val lat = p.getString("origin_lat", null)?.toDoubleOrNull() ?: return null
+        val lon = p.getString("origin_lon", null)?.toDoubleOrNull() ?: return null
+        return GeoSample(lat, lon)
     }
 
     fun setPaused(context: Context, paused: Boolean) {
@@ -136,7 +145,8 @@ object TrackStore {
 
         val total = p.getFloat("distance_m", 0f).toDouble() + segmentM
         val accuracy = if (location.hasAccuracy()) location.accuracy else 0f
-        p.edit()
+        val firstPoint = oldLat == null || oldLon == null
+        val editor = p.edit()
             .putString("lat", location.latitude.toString())
             .putString("lon", location.longitude.toString())
             .putLong("last_gps_time", now)
@@ -144,7 +154,10 @@ object TrackStore {
             .putFloat("speed_mps", speedMps.coerceIn(0.0, 14.0).toFloat())
             .putFloat("accuracy_m", accuracy)
             .putString("gps_status", if (accuracy in 0f..25f) "GPS preciso" else "GPS activo")
-            .apply()
+        if (firstPoint || p.getString("origin_lat", null).isNullOrBlank()) {
+            editor.putString("origin_lat", location.latitude.toString()).putString("origin_lon", location.longitude.toString())
+        }
+        editor.apply()
 
         val recent = stringList(p.getString("recent_points", "")).toMutableList()
         recent.add("${location.latitude},${location.longitude}")
@@ -204,15 +217,7 @@ object TrackStore {
 
     fun finish(context: Context, elapsedMs: Long, endAt: Long = System.currentTimeMillis()) = synchronized(lock) {
         val p = prefs(context)
-        SessionHistoryStore.record(
-            context = context,
-            startAt = p.getLong("start_at", 0L),
-            endAt = endAt,
-            elapsedMs = elapsedMs,
-            distanceM = p.getFloat("distance_m", 0f).toDouble(),
-            strokes = p.getInt("strokes", 0),
-            trackPath = p.getString("track_file", null)
-        )
+        // History is saved only after the user accepts the finish review.
         p.edit().putBoolean("active", false).putBoolean("paused", false)
             .putLong("elapsed_ms", elapsedMs.coerceAtLeast(0L)).putLong("end_at", endAt).apply()
         val path = p.getString("track_file", null)

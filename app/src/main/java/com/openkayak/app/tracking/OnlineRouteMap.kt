@@ -45,7 +45,8 @@ fun OnlineRouteMap(
     buoys: List<SavedBuoy>,
     latitude: Double?,
     longitude: Double?,
-    ambient: Boolean
+    ambient: Boolean,
+    allowNetwork: Boolean = true
 ) {
     val center = points.lastOrNull()
     val lat = latitude ?: center?.latitude
@@ -56,8 +57,11 @@ fun OnlineRouteMap(
     var tiles by remember { mutableStateOf<List<MapTile>>(emptyList()) }
     var mapStatus by remember { mutableStateOf("Esperando posición GPS") }
 
-    LaunchedEffect(centerX, centerY) {
-        if (centerX < 0 || centerY < 0) {
+    LaunchedEffect(centerX, centerY, ambient, allowNetwork) {
+        if (ambient || !allowNetwork) {
+            tiles = emptyList()
+            mapStatus = if (points.isEmpty()) "Sin circuito guardado" else "Trazado guardado · AOD"
+        } else if (centerX < 0 || centerY < 0) {
             tiles = emptyList()
             mapStatus = "Inicia una sesión para cargar el mapa"
         } else {

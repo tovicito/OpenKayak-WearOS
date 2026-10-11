@@ -24,12 +24,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +61,11 @@ import com.openkayak.app.tracking.SavedBuoy
 import com.openkayak.app.tracking.TrackService
 import com.openkayak.app.tracking.TrackSnapshot
 import com.openkayak.app.tracking.TrackStore
+import com.openkayak.app.tracking.SessionReviewStore
+import com.openkayak.app.tracking.FinishedSession
+import com.openkayak.app.tracking.CircuitStore
+import com.openkayak.app.tracking.TurnMemoryStore
+import com.openkayak.app.tracking.AthleteProfileStore
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -139,6 +146,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     var showFinishConfirm by remember { mutableStateOf(false) }
     var healthStatus by remember { mutableStateOf("Health Connect: comprobando…") }
     var savedBuoys by remember { mutableStateOf(BuoyStore.all(context)) }
+    var pendingReview by remember { mutableStateOf(SessionReviewStore.pending(context)) }
 
     val healthLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract()
@@ -196,11 +204,14 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
 
     LaunchedEffect(ambientTick) { snapshot = TrackStore.snapshot(context) }
 
-    LaunchedEffect(isAmbient) {
+    LaunchedEffect(isAmbient, snapshot.active) {
         while (true) {
             snapshot = TrackStore.snapshot(context)
             savedBuoys = BuoyStore.all(context)
-            delay(if (isAmbient) 10_000L else 450L)
+            val review = SessionReviewStore.pending(context)
+            if (review != null && review.endAt != pendingReview?.endAt) pendingReview = review
+            if (review == null) pendingReview = null
+            delay(if (isAmbient) 1000L else 400L)
         }
     }
 
@@ -220,7 +231,11 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                 Spacer(Modifier.height(5.dp))
             }
 
-            when (page) {
+            if (isAmbient) {
+                val mapPoints = if (snapshot.active) TrackStore.recentTrack(context) else CircuitStore.points(context).ifEmpty { TrackStore.recentTrack(context) }
+                val mapBuoys = if (snapshot.active) TurnMemoryStore.eventsForSession(context, snapshot.startAt) else savedBuoys
+                AmbientDashboard(snapshot, ble, mapPoints, mapBuoys, ambientTick)
+            } else when (page) {
                 0 -> DashboardPage(snapshot, ble, isAmbient,
                     onStart = { startSession(context) },
                     onPauseResume = {
@@ -254,6 +269,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                 )
                 5 -> HistoryPage(context, isAmbient)
                 else -> SettingsPage(
+                    context = context,
                     healthStatus = healthStatus,
                     isAmbient = isAmbient,
                     onHealthPermissions = { checkHealthPermissions() },
@@ -263,11 +279,9 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
             }
         }
 
-        ArrowControl("‹", Modifier.align(Alignment.CenterStart).padding(start = 2.dp), isAmbient) {
-            page = (page + 6) % 7
-        }
-        ArrowControl("›", Modifier.align(Alignment.CenterEnd).padding(end = 2.dp), isAmbient) {
-            page = (page + 1) % 7
+        if (!isAmbient) {
+            ArrowControl("‹", Modifier.align(Alignment.CenterStart).padding(start = 2.dp), false) { page = (page + 6) % 7 }
+            ArrowControl("›", Modifier.align(Alignment.CenterEnd).padding(end = 2.dp), false) { page = (page + 1) % 7 }
         }
 
         if (showFinishConfirm && !isAmbient) {
@@ -307,6 +321,45 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
             )
         }
+        if (pendingReview != null && !isAmbient) {
+            FinishReviewDialog(
+                review = pendingReview!!,
+                onSaveBoth = {
+                    val value = pendingReview
+                    if (value != null) {
+                        SessionReviewStore.saveWorkout(context, value)
+                        SessionReviewStore.saveCircuit(context, value)
+                        SessionReviewStore.complete(context, value, keepWorkout = true)
+                        pendingReview = null
+                        enqueueSync(context)
+                    }
+                },
+                onSaveWorkout = {
+                    val value = pendingReview
+                    if (value != null) {
+                        SessionReviewStore.saveWorkout(context, value)
+                        SessionReviewStore.complete(context, value, keepWorkout = true)
+                        pendingReview = null
+                        enqueueSync(context)
+                    }
+                },
+                onSaveCircuit = {
+                    val value = pendingReview
+                    if (value != null) {
+                        SessionReviewStore.saveCircuit(context, value)
+                        SessionReviewStore.complete(context, value, keepWorkout = false)
+                        pendingReview = null
+                    }
+                },
+                onDelete = {
+                    val value = pendingReview
+                    if (value != null) {
+                        SessionReviewStore.complete(context, value, keepWorkout = false)
+                        pendingReview = null
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -319,6 +372,10 @@ private object BuildCompat {
 }
 
 private fun startSession(context: Context) {
+    if (SessionReviewStore.pending(context) != null) {
+        Toast.makeText(context, "Guarda o borra el resumen anterior antes de iniciar otro entrenamiento.", Toast.LENGTH_LONG).show()
+        return
+    }
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
         Toast.makeText(context, "Concede ubicación precisa y vuelve a iniciar.", Toast.LENGTH_LONG).show()
         return
@@ -537,22 +594,105 @@ private fun BuoysPage(
         if (snapshot.latitude == null) {
             Text("Inicia GPS para guardar una boya en la posición actual.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
         }
-        Text("Son giros inferidos, no reconocimiento visual de boyas físicas. Se guardan localmente.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
+        Text("Las boyas se infieren del recorrido GPS, no por visión artificial. Al guardar un circuito se agrupan sus repeticiones.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun AmbientDashboard(s: TrackSnapshot, ble: BleHrState, points: List<GeoSample>, buoys: List<SavedBuoy>, ambientTick: Int) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Text(formatDuration(s.elapsedMs), color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
+        Text(if (s.active && !s.paused) "PIRAGÜISMO EN CURSO" else "CIRCUITO GUARDADO", color = Color(0xFF8D9DA8), fontSize = 7.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(5.dp))
+        Box(Modifier.size(132.dp).clip(CircleShape).background(Color.Black)) {
+            OnlineRouteMap(points = points, buoys = buoys, latitude = s.latitude ?: points.lastOrNull()?.latitude,
+                longitude = s.longitude ?: points.lastOrNull()?.longitude, ambient = true, allowNetwork = false)
+            Canvas(Modifier.fillMaxSize()) {
+                drawCircle(brush = Brush.radialGradient(
+                    colorStops = arrayOf(0.0f to Color.Transparent, 0.62f to Color.Transparent, 0.88f to Color(0xCC000000), 1.0f to Color.Black),
+                    center = center, radius = size.minDimension / 2f
+                ), radius = size.minDimension / 2f)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            MetricTile("FC", if (ble.isFresh) ble.bpm.toString() else "--", "lpm", Pink, Modifier.weight(1f), true)
+            MetricTile("DISTANCIA", String.format(Locale.US, "%.2f", s.distanceM / 1000.0), "km", Ice, Modifier.weight(1f), true)
+            MetricTile("VELOCIDAD", String.format(Locale.US, "%.1f", s.speedKmh), "km/h", Mint, Modifier.weight(1f), true)
+        }
+        Text("AOD · actualización solicitada cada segundo · " + s.gpsStatus, color = Color.DarkGray, fontSize = 6.sp)
+    }
+}
+
+@Composable
+private fun FinishReviewDialog(review: FinishedSession, onSaveBoth: () -> Unit, onSaveWorkout: () -> Unit, onSaveCircuit: () -> Unit, onDelete: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(Color(0xE6000000)), contentAlignment = Alignment.Center) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 27.dp, vertical = 10.dp).clip(RoundedCornerShape(22.dp))
+            .background(Panel2).padding(10.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("RESUMEN DEL ENTRENAMIENTO", color = Mint, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            Text(String.format(Locale.getDefault(), "%.2f km · %s", review.distanceM / 1000.0, formatDuration(review.elapsedMs)),
+                color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                MetricTile("FC MED.", if (review.averageBpm > 0) review.averageBpm.toString() else "--", "lpm", Pink, Modifier.weight(1f))
+                MetricTile("FC MÁX.", if (review.maxBpm > 0) review.maxBpm.toString() else "--", "lpm", Pink, Modifier.weight(1f))
+                MetricTile("FC MÍN.", if (review.minBpm > 0) review.minBpm.toString() else "--", "lpm", Pink, Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(review.calories.toString() + " kcal estimadas · " + review.strokes + " paladas · " + review.turns.size + " giros", color = Ice, fontSize = 8.sp, textAlign = TextAlign.Center)
+            Text(if (review.turns.any { it.repetitions >= 2 }) review.turns.count { it.repetitions >= 2 }.toString() + " posibles boyas repetidas" else "Boyas inferidas del recorrido GPS", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
+            if (review.isCircuit) Text("Posible circuito cerrado detectado", color = Mint, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Box(Modifier.fillMaxWidth().height(104.dp).clip(RoundedCornerShape(15.dp)).background(Night)) {
+                OnlineRouteMap(points = review.points, buoys = review.turns, latitude = review.points.lastOrNull()?.latitude,
+                    longitude = review.points.lastOrNull()?.longitude, ambient = false, allowNetwork = true)
+            }
+            Spacer(Modifier.height(5.dp))
+            ActionPill("GUARDAR ENTRENO Y CIRCUITO", Mint, Night, onSaveBoth, Modifier.fillMaxWidth())
+            Spacer(Modifier.height(3.dp))
+            ActionPill("GUARDAR ENTRENO", Panel, Color.White, onSaveWorkout, Modifier.fillMaxWidth())
+            Spacer(Modifier.height(3.dp))
+            ActionPill("GUARDAR CIRCUITO", Panel, Ice, onSaveCircuit, Modifier.fillMaxWidth())
+            Spacer(Modifier.height(3.dp))
+            ActionPill("BORRAR ENTRENO Y CIRCUITO", Color(0xFF4B2428), Pink, onDelete, Modifier.fillMaxWidth())
+        }
     }
 }
 
 @Composable
 private fun SettingsPage(
+    context: Context,
     healthStatus: String,
     isAmbient: Boolean,
     onHealthPermissions: () -> Unit,
     onSync: () -> Unit,
     onExport: () -> Unit
 ) {
+    var weightText by remember { mutableStateOf(String.format(Locale.US, "%.1f", AthleteProfileStore.weightKg(context))) }
+    var ageText by remember { mutableStateOf(AthleteProfileStore.ageYears(context).toString()) }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("AJUSTES Y DATOS", color = if (isAmbient) Color.LightGray else Mint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(7.dp))
         Text(healthStatus, color = Quiet, fontSize = 9.sp, textAlign = TextAlign.Center)
+        if (!isAmbient) {
+            Spacer(Modifier.height(6.dp))
+            Text("PERFIL DEPORTISTA", color = Ice, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Peso (kg)", color = Quiet, fontSize = 7.sp)
+                    BasicTextField(value = weightText, onValueChange = { weightText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.take(5) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp), modifier = Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(8.dp)).padding(7.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("Edad", color = Quiet, fontSize = 7.sp)
+                    BasicTextField(value = ageText, onValueChange = { ageText = it.filter(Char::isDigit).take(3) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp), modifier = Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(8.dp)).padding(7.dp))
+                }
+            }
+            ActionPill("GUARDAR PERFIL", Panel2, Ice, {
+                val weight = weightText.replace(',', '.').toDoubleOrNull()
+                val age = ageText.toIntOrNull()
+                if (weight != null && age != null && AthleteProfileStore.save(context, weight, age)) Toast.makeText(context, "Perfil guardado", Toast.LENGTH_SHORT).show()
+                else Toast.makeText(context, "Peso (25–250 kg) o edad (8–100) no válidos", Toast.LENGTH_LONG).show()
+            }, Modifier.fillMaxWidth())
+        }
         if (!isAmbient) {
             Spacer(Modifier.height(6.dp))
             ActionPill("PERMISOS HEALTH CONNECT", Panel2, Color.White, onHealthPermissions, Modifier.fillMaxWidth())
