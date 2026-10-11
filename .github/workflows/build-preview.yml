@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-test:
-    name: Compilar y probar (JDK 17 / Android 35)
+    name: Compilar y probar (JDK 17 / Android 36)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -33,8 +33,8 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Instalar plataforma Android 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Instalar plataforma Android 36
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Comprobar Gradle
         run: ./gradlew --version
