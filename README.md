@@ -13,10 +13,11 @@ Aplicación independiente para piragüismo en español, orientada a Wear OS 5 y 
 - Modelo local softmax de tres clases entrenado con trazas GPS sintéticas, memoria persistente de los eventos detectados y análisis del GPX para agrupar posibles boyas repetidas.
 - Ventana post-entreno con mapa online, FC media/máxima/mínima, kcal estimadas según peso configurable, paladas, giros y opciones para guardar/borrar sesión y circuito. Health Connect se encola tras guardar el entrenamiento.
 - Exportación de la ruta en GPX y pruebas unitarias iniciales del parser BLE y del detector de paladas.
+- Mapa offline: importa un paquete raster MBTiles con atribución del proveedor; el reloj busca primero sus teselas locales y conserva hasta 512 teselas de las zonas vistas con conexión para revisarlas después sin red.
 
 ## Límites conocidos de la versión
 
-La pantalla de ruta carga teselas de OpenStreetMap por Internet y dibuja el recorrido encima. No incluye descarga de mapas offline en esta preview. Tampoco aprende aún automáticamente circuitos repetidos. La detección de paladas es experimental; oleaje y golpes rítmicos aún pueden crear falsos positivos. Hay que validarla en tu piragua. No se ha validado todavía en agua real ni con tu banda BLE concreta.
+La pantalla de ruta carga teselas de OpenStreetMap por Internet cuando el usuario las está viendo, conserva una caché local limitada y dibuja el recorrido encima. En Ajustes se puede importar un paquete raster MBTiles (hasta 512 MiB) que incluya la atribución del proveedor; las teselas de ese paquete se consultan antes que las online. La app no precarga áreas desde tile.openstreetmap.org porque la política oficial de ese servidor prohíbe el uso offline masivo. Los paquetes de mapas deben proceder de un proveedor que permita uso offline. Tampoco aprende aún automáticamente circuitos repetidos. La detección de paladas es experimental; oleaje y golpes rítmicos aún pueden crear falsos positivos. Hay que validarla en tu piragua. No se ha validado todavía en agua real ni con tu banda BLE concreta.
 
 El botón de salida de AOD intenta reactivar el reloj, pero Wear OS puede requerir que el primer toque despierte la pantalla antes de aceptar el toque del botón. Las frecuencias de refresco en AOD dependen del sistema. Health Connect solicita los permisos de ejercicio, distancia y frecuencia cardíaca que usa esta versión. Si no está disponible en el reloj, Ajustes muestra el motivo.
 
