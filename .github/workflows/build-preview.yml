@@ -55,7 +55,7 @@ jobs:
           retention-days: 90
 
       - name: Publish the two APKs together in one GitHub pre-release
-        if: success() && github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026' && contains(github.event.head_commit.message, '[release v2.1]')
+        if: success() && github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.1-preview-${{ github.run_number }}
