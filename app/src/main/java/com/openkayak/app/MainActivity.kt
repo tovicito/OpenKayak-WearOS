@@ -529,7 +529,7 @@ private fun RoutePage(s: TrackSnapshot, points: List<GeoSample>, buoys: List<Sav
         }
         Spacer(Modifier.height(4.dp))
         Text("Mapa online · cian: recorrido · rosa: boyas · naranja: U-turns", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
-        Text("El mapa necesita conexión a Internet; el trazado GPS se guarda localmente.", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
+        Text("El trazado se guarda localmente; importa MBTiles o visualiza el área online para guardarla.", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
     }
 }
 
