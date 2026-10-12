@@ -149,7 +149,7 @@ fun OnlineRouteMap(
                     drawLine(Color(0xFF42D9FF), a, b, strokeWidth = 3.5f)
                 }
             }
-            buoys.forEach { buoy ->
+            buoys.filterNot { it.turnType.equals("CORRECTION", ignoreCase = true) }.forEach { buoy ->
                 val color = when (buoy.turnType.uppercase()) {
                     "UTURN", "U_TURN", "U-TURN" -> Color(0xFFFFB54A)
                     "BUOY", "BOYA" -> Color(0xFFFF8FA3)

@@ -5,6 +5,8 @@ import java.io.File
 import java.time.Instant
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.hypot
 
 data class RouteAnalysis(
     val points: List<GeoSample>,
@@ -35,7 +37,7 @@ object RouteAnalyzer {
     private const val MAX_MAP_POINTS = 14_000
     private const val TURN_BASELINE_METERS = 12.0
     private const val TURN_THRESHOLD_DEGREES = 62.0
-    private const val UTURN_THRESHOLD_DEGREES = 145.0
+    private const val UTURN_THRESHOLD_DEGREES = 150.0
     private const val EVENT_COOLDOWN_MS = 22_000L
     private const val EVENT_COOLDOWN_METERS = 22.0
     private const val CLUSTER_RADIUS_METERS = 20.0
@@ -71,12 +73,53 @@ object RouteAnalyzer {
             }
         }
 
-        val turns = clusterRepeatVisits(detectTurnCandidates(cleaned))
-        val totalMeters = cleaned.zipWithNext().sumOf { distance(it.first.point, it.second.point) }
-        val closingMeters = if (cleaned.size >= 3) distance(cleaned.first().point, cleaned.last().point) else Double.MAX_VALUE
+        val stable = removeIsolatedGpsSpikes(cleaned)
+        val turns = clusterRepeatVisits(detectTurnCandidates(stable))
+        val totalMeters = stable.zipWithNext().sumOf { distance(it.first.point, it.second.point) }
+        val closingMeters = if (stable.size >= 3) distance(stable.first().point, stable.last().point) else Double.MAX_VALUE
         val repeated = turns.count { it.repetitions >= 2 }
         val circuit = totalMeters > 250.0 && closingMeters < maxOf(25.0, totalMeters * 0.04) && turns.size >= 3
-        return RouteAnalysis(downsample(cleaned.map { it.point }, MAX_MAP_POINTS), turns, repeated, circuit)
+        return RouteAnalysis(downsample(stable.map { it.point }, MAX_MAP_POINTS), turns, repeated, circuit)
+    }
+
+    /**
+     * Remove only an isolated, large sideways excursion whose neighbours are nearly
+     * on the same track. This rejects common single-fix GNSS spikes without rounding
+     * genuine square corners or smoothing the whole route into an oval.
+     */
+    private fun removeIsolatedGpsSpikes(points: List<TimedPoint>): List<TimedPoint> {
+        if (points.size < 3) return points
+        val result = ArrayList<TimedPoint>(points.size)
+        result.add(points.first())
+        for (index in 1 until points.lastIndex) {
+            val previous = points[index - 1]
+            val current = points[index]
+            val next = points[index + 1]
+            val dtBefore = current.timeMs - previous.timeMs
+            val dtAfter = next.timeMs - current.timeMs
+            if (dtBefore in 1L..4_000L && dtAfter in 1L..4_000L) {
+                val direct = distance(previous.point, next.point)
+                val detour = distance(previous.point, current.point) + distance(current.point, next.point) - direct
+                val sideError = perpendicularDistanceMeters(current.point, previous.point, next.point)
+                if (detour > 18.0 && sideError > 12.0) continue
+            }
+            result.add(current)
+        }
+        result.add(points.last())
+        return result
+    }
+
+    private fun perpendicularDistanceMeters(point: GeoSample, start: GeoSample, end: GeoSample): Double {
+        val referenceLat = Math.toRadians((start.latitude + end.latitude) / 2.0)
+        val metersPerLon = 111_320.0 * cos(referenceLat)
+        val dx = (end.longitude - start.longitude) * metersPerLon
+        val dy = (end.latitude - start.latitude) * 111_320.0
+        val px = (point.longitude - start.longitude) * metersPerLon
+        val py = (point.latitude - start.latitude) * 111_320.0
+        val lengthSquared = dx * dx + dy * dy
+        if (lengthSquared < 0.01) return hypot(px, py)
+        val projection = ((px * dx + py * dy) / lengthSquared).coerceIn(0.0, 1.0)
+        return hypot(px - projection * dx, py - projection * dy)
     }
 
     private fun detectTurnCandidates(points: List<TimedPoint>): List<Candidate> {
