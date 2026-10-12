@@ -61,6 +61,9 @@ class WearSyncService : WearableListenerService() {
                     data.getInt("mapZoom", AppSettingsStore.mapZoom(this)),
                     data.getFloat("gpsAccuracyLimitM", AppSettingsStore.gpsAccuracyLimit(this))
                 )
+                AppSettingsStore.setRouteColorHex(
+                    this, data.getString("routeColorHex") ?: AppSettingsStore.routeColorHex(this)
+                )
             }
             path == "/openkayak/import/circuit/delete" -> CircuitStore.clear(this)
             path.startsWith("/openkayak/import/circuit/") -> {

@@ -96,12 +96,16 @@ class PhoneSyncService : WearableListenerService() {
             request.dataMap.putString("items", encoded)
             io.execute { runCatching { Tasks.await(Wearable.getDataClient(context).putDataItem(request.asPutDataRequest().setUrgent())) } }
         }
-        fun publishSettings(context: android.content.Context, weightKg: Double, ageYears: Int, mapZoom: Int, gpsAccuracy: Float) {
+        fun publishSettings(
+            context: android.content.Context, weightKg: Double, ageYears: Int,
+            mapZoom: Int, gpsAccuracy: Float, routeColorHex: String
+        ) {
             val request = PutDataMapRequest.create("/openkayak/settings")
             request.dataMap.putDouble("weightKg", weightKg)
             request.dataMap.putInt("ageYears", ageYears)
             request.dataMap.putInt("mapZoom", mapZoom)
             request.dataMap.putFloat("gpsAccuracyLimitM", gpsAccuracy)
+            request.dataMap.putString("routeColorHex", routeColorHex)
             io.execute { runCatching { Tasks.await(Wearable.getDataClient(context).putDataItem(request.asPutDataRequest().setUrgent())) } }
         }
         fun importCircuit(context: android.content.Context, file: File, label: String) {

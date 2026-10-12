@@ -14,6 +14,11 @@ data class PhoneWorkout(
 data class PhoneBuoy(val id: Long, val latitude: Double, val longitude: Double, val type: String)
 
 object PhoneDataStore {
+    const val ROUTE_COLOR_ORANGE = "FFFF8500"
+    const val ROUTE_COLOR_CYAN = "FF42D9FF"
+    const val ROUTE_COLOR_PINK = "FFFF4FA3"
+    private val routeColorPalette = setOf(ROUTE_COLOR_ORANGE, ROUTE_COLOR_CYAN, ROUTE_COLOR_PINK)
+
     private const val PREFS = "openkayak_phone"
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -85,10 +90,16 @@ object PhoneDataStore {
         }.getOrDefault(emptyList())
     }
 
-    fun saveSettings(context: Context, weightKg: Double, ageYears: Int, mapZoom: Int, gpsAccuracy: Float) {
+    fun saveSettings(context: Context, weightKg: Double, ageYears: Int, mapZoom: Int, gpsAccuracy: Float, routeColorHex: String) {
+        val safeRouteColor = routeColorHex.takeIf { it in routeColorPalette } ?: ROUTE_COLOR_ORANGE
         prefs(context).edit().putFloat("weight_kg", weightKg.toFloat()).putInt("age_years", ageYears)
-            .putInt("map_zoom", mapZoom.coerceIn(14, 17)).putFloat("gps_accuracy", gpsAccuracy.coerceIn(10f, 65f)).apply()
+            .putInt("map_zoom", mapZoom.coerceIn(14, 17)).putFloat("gps_accuracy", gpsAccuracy.coerceIn(10f, 65f))
+            .putString("route_color_hex", safeRouteColor).apply()
     }
+    fun routeColorHex(context: Context): String =
+        prefs(context).getString("route_color_hex", ROUTE_COLOR_ORANGE)
+            ?.takeIf { it in routeColorPalette } ?: ROUTE_COLOR_ORANGE
+
     fun weightKg(context: Context) = prefs(context).getFloat("weight_kg", 70f).toDouble()
     fun ageYears(context: Context) = prefs(context).getInt("age_years", 30)
     fun mapZoom(context: Context) = prefs(context).getInt("map_zoom", 16).coerceIn(14, 17)

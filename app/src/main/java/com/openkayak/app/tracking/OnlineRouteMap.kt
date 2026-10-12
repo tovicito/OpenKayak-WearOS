@@ -1,6 +1,7 @@
 package com.openkayak.app.tracking
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -58,6 +59,18 @@ fun OnlineRouteMap(
     followPosition: Boolean = false
 ) {
     val context = LocalContext.current
+    var routeColorHex by remember(context) { mutableStateOf(AppSettingsStore.routeColorHex(context)) }
+    DisposableEffect(context) {
+        val preferences = context.getSharedPreferences(AppSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == AppSettingsStore.ROUTE_COLOR_KEY) {
+                routeColorHex = AppSettingsStore.routeColorHex(context)
+            }
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    val routeLineColor = Color(routeColorHex.toLongOrNull(16) ?: 0xFFFF8500L)
     val tileSizePx = with(LocalDensity.current) { 256.dp.toPx() }
     val firstPoint = points.firstOrNull()
     val routeKey = remember(firstPoint, points.size) {
@@ -146,7 +159,8 @@ fun OnlineRouteMap(
                 val b = track[index]
                 if ((a.x in -40f..(size.width + 40f) || b.x in -40f..(size.width + 40f)) &&
                     (a.y in -40f..(size.height + 40f) || b.y in -40f..(size.height + 40f))) {
-                    drawLine(Color(0xFF42D9FF), a, b, strokeWidth = 3.5f)
+                    drawLine(Color(0xE807111C), a, b, strokeWidth = 7f)
+                    drawLine(routeLineColor, a, b, strokeWidth = 4f)
                 }
             }
             buoys.filterNot { it.turnType.equals("CORRECTION", ignoreCase = true) }.forEach { buoy ->

@@ -40,6 +40,13 @@ private val Orange = Color(0xFFFFB54A)
 private val Muted = Color(0xFFA5B7C5)
 private val Trasona = LatLon(43.558, -5.91)
 
+private data class RouteColorOption(val label: String, val hex: String)
+private val RouteColorOptions = listOf(
+    RouteColorOption("Naranja", PhoneDataStore.ROUTE_COLOR_ORANGE),
+    RouteColorOption("Cian", PhoneDataStore.ROUTE_COLOR_CYAN),
+    RouteColorOption("Rosa", PhoneDataStore.ROUTE_COLOR_PINK)
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +76,7 @@ private fun OpenKayakPhone() {
     var ageText by remember { mutableStateOf(PhoneDataStore.ageYears(context).toString()) }
     var zoom by remember { mutableIntStateOf(PhoneDataStore.mapZoom(context)) }
     var accuracy by remember { mutableFloatStateOf(PhoneDataStore.gpsAccuracy(context)) }
+    var routeColorHex by remember { mutableStateOf(PhoneDataStore.routeColorHex(context)) }
 
     val circuitPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
@@ -92,6 +100,10 @@ private fun OpenKayakPhone() {
     }
 
     LaunchedEffect(Unit) {
+        PhoneSyncService.publishSettings(
+            context, PhoneDataStore.weightKg(context), PhoneDataStore.ageYears(context),
+            PhoneDataStore.mapZoom(context), PhoneDataStore.gpsAccuracy(context), PhoneDataStore.routeColorHex(context)
+        )
         PhoneSyncService.requestSync(context)
         status = "Buscando el reloj y solicitando todos los entrenamientos guardados…"
         while (true) {
@@ -142,7 +154,7 @@ private fun OpenKayakPhone() {
                 )
                 1 -> MapAndBuoysPage(
                     workouts = workouts, selectedStart = selectedStart, buoys = buoys,
-                    picked = picked, buoyType = buoyType, circuitPath = circuitPath,
+                    picked = picked, buoyType = buoyType, circuitPath = circuitPath, routeColorHex = routeColorHex,
                     onPick = { picked = it }, onType = { buoyType = it },
                     onSaveBuoy = {
                         PhoneDataStore.addBuoy(context, picked.latitude, picked.longitude, buoyType)
@@ -170,19 +182,20 @@ private fun OpenKayakPhone() {
                     }
                 )
                 else -> SettingsPage(
-                    weightText, ageText, zoom, accuracy,
+                    weightText, ageText, zoom, accuracy, routeColorHex,
                     onWeight = { weightText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.take(6) },
                     onAge = { ageText = it.filter(Char::isDigit).take(3) },
                     onZoom = { zoom = it },
                     onAccuracy = { accuracy = it },
+                    onRouteColor = { routeColorHex = it },
                     onSave = {
                         val weight = weightText.replace(',', '.').toDoubleOrNull()
                         val age = ageText.toIntOrNull()
                         if (weight == null || age == null || weight !in 25.0..250.0 || age !in 8..100) {
                             status = "Comprueba el peso (25–250 kg) y la edad (8–100)."
                         } else {
-                            PhoneDataStore.saveSettings(context, weight, age, zoom, accuracy)
-                            PhoneSyncService.publishSettings(context, weight, age, zoom, accuracy)
+                            PhoneDataStore.saveSettings(context, weight, age, zoom, accuracy, routeColorHex)
+                            PhoneSyncService.publishSettings(context, weight, age, zoom, accuracy, routeColorHex)
                             status = "Ajustes guardados y enviados al reloj."
                         }
                     }
@@ -237,7 +250,7 @@ private fun WorkoutsPage(
 @Composable
 private fun MapAndBuoysPage(
     workouts: List<PhoneWorkout>, selectedStart: Long?, buoys: List<PhoneBuoy>,
-    picked: LatLon, buoyType: String, circuitPath: String?,
+    picked: LatLon, buoyType: String, circuitPath: String?, routeColorHex: String,
     onPick: (LatLon) -> Unit, onType: (String) -> Unit, onSaveBuoy: () -> Unit,
     onDeleteBuoy: (Long) -> Unit, onImportCircuit: () -> Unit, onDeleteCircuit: () -> Unit,
     onOpenMaps: () -> Unit
@@ -262,6 +275,7 @@ private fun MapAndBuoysPage(
             buoys = buoys,
             center = route.getOrNull(route.size / 2) ?: picked,
             selected = picked,
+            routeColorHex = routeColorHex,
             onPick = onPick
         )
         Spacer(Modifier.height(8.dp))
@@ -297,9 +311,9 @@ private fun MapAndBuoysPage(
 
 @Composable
 private fun SettingsPage(
-    weightText: String, ageText: String, zoom: Int, accuracy: Float,
+    weightText: String, ageText: String, zoom: Int, accuracy: Float, routeColorHex: String,
     onWeight: (String) -> Unit, onAge: (String) -> Unit, onZoom: (Int) -> Unit,
-    onAccuracy: (Float) -> Unit, onSave: () -> Unit
+    onAccuracy: (Float) -> Unit, onRouteColor: (String) -> Unit, onSave: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(bottom = 16.dp)) {
         Text("AJUSTES DEL RELOJ", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -310,7 +324,25 @@ private fun SettingsPage(
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(value = ageText, onValueChange = onAge, label = { Text("Edad del perfil") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(14.dp))
+        Text("Color del circuito", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            RouteColorOptions.forEach { option ->
+                FilterChip(
+                    selected = routeColorHex == option.hex,
+                    onClick = { onRouteColor(option.hex) },
+                    label = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(color = Color(option.hex.toLong(16)), shape = RoundedCornerShape(50), modifier = Modifier.size(10.dp)) {}
+                            Spacer(Modifier.width(5.dp))
+                            Text(option.label)
+                        }
+                    }
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
         Text("Zoom inicial del mapa: Z" + zoom, color = Color.White)
         Slider(value = zoom.toFloat(), onValueChange = { onZoom(it.toInt()) }, valueRange = 14f..17f, steps = 2)
         Spacer(Modifier.height(8.dp))

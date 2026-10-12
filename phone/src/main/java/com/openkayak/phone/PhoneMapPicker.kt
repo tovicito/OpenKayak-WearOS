@@ -46,6 +46,7 @@ fun PhoneMapPicker(
     buoys: List<PhoneBuoy>,
     center: LatLon,
     selected: LatLon,
+    routeColorHex: String = PhoneDataStore.ROUTE_COLOR_ORANGE,
     onPick: (LatLon) -> Unit
 ) {
     val context = LocalContext.current
@@ -106,7 +107,12 @@ fun PhoneMapPicker(
                 ((tileX(point.longitude, zoom) - worldX) * tileSize + size.width / 2.0).toFloat(),
                 ((tileY(point.latitude, zoom) - worldY) * tileSize + size.height / 2.0).toFloat()
             )
-            for (index in 1 until route.size) drawLine(Color(0xFF42D9FF), screen(route[index - 1]), screen(route[index]), 4f)
+            for (index in 1 until route.size) {
+                val start = screen(route[index - 1])
+                val end = screen(route[index])
+                drawLine(Color(0xE807111C), start, end, 7f)
+                drawLine(Color(routeColorHex.toLong(16)), start, end, 4f)
+            }
             buoys.forEach { buoy ->
                 drawCircle(if (buoy.type == "UTURN") Color(0xFFFFB54A) else Color(0xFFFF829B),
                     7f, screen(LatLon(buoy.latitude, buoy.longitude)))
