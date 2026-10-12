@@ -161,7 +161,7 @@ fun OnlineRouteMap(
         }
         if (tiles.isEmpty()) Text(status, Modifier.align(Alignment.Center), color = Color.White,
             fontSize = 8.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium)
-        Text(remember { OfflineMapStore.attribution(context) }, Modifier.align(Alignment.BottomStart).padding(3.dp), color = Color.White, fontSize = 6.sp, maxLines = 1)
+        Text(OfflineMapStore.attribution(context), Modifier.align(Alignment.BottomStart).padding(3.dp), color = Color.White, fontSize = 6.sp, maxLines = 1)
         if (!ambient) {
             Row(Modifier.align(Alignment.TopEnd).background(Color(0xDD101820), RoundedCornerShape(12.dp))) {
                 Text("−", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
