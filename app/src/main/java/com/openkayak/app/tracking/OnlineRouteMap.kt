@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -58,6 +58,7 @@ fun OnlineRouteMap(
     followPosition: Boolean = false
 ) {
     val context = LocalContext.current
+    val tileSizePx = with(LocalDensity.current) { 256.dp.toPx() }
     val firstPoint = points.firstOrNull()
     val routeKey = remember(firstPoint, points.size) {
         if (points.isEmpty()) 0 else 31 * points.size + points.first().hashCode()
@@ -116,8 +117,8 @@ fun OnlineRouteMap(
     val dragModifier = if (!ambient) Modifier.pointerInput(zoom) {
         detectDragGestures { change, dragAmount ->
             change.consume()
-            val worldX = tileX(centerLon, zoom) - dragAmount.x / 256.0
-            val worldY = tileY(centerLat, zoom) - dragAmount.y / 256.0
+            val worldX = tileX(centerLon, zoom) - dragAmount.x / tileSizePx.toDouble()
+            val worldY = tileY(centerLat, zoom) - dragAmount.y / tileSizePx.toDouble()
             val moved = geoAtTile(worldX, worldY, zoom)
             centerLat = moved.latitude
             centerLon = moved.longitude
@@ -129,11 +130,11 @@ fun OnlineRouteMap(
         .background(if (ambient) Color.Black else Color(0xFF101820))) {
         Canvas(Modifier.fillMaxSize()) {
             // OSM tiles are 256 px; scaling them by display density distorts the map.
-            val tileSize = 256f
+            val tileSize = tileSizePx
             tiles.forEach { tile ->
                 val left = ((tile.x - centerX) * tileSize + size.width / 2f).toInt()
                 val top = ((tile.y - centerY) * tileSize + size.height / 2f).toInt()
-                drawImage(tile.image, dstOffset = IntOffset(left, top), dstSize = IntSize(256, 256))
+                drawImage(tile.image, dstOffset = IntOffset(left, top), dstSize = IntSize(tileSize.toInt(), tileSize.toInt()))
             }
             fun screen(point: GeoSample): Offset = Offset(
                 ((tileX(point.longitude, zoom) - centerX) * tileSize + size.width / 2f).toFloat(),

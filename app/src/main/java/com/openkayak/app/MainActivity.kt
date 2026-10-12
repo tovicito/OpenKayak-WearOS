@@ -584,7 +584,7 @@ private fun BuoysPage(
                     StatusDot(true, false)
                     Spacer(Modifier.width(4.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (buoy.isTurn) "GIRO GPS" else "PUNTO DE RUTA", color = if (buoy.isTurn) Pink else Mint, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        Text(when { buoy.turnType.equals("UTURN", true) -> "GIRO EN U"; buoy.turnType.equals("BUOY", true) -> "BOYA NORMAL"; buoy.isTurn -> "GIRO GPS"; else -> "PUNTO DE RUTA" }, color = when { buoy.turnType.equals("UTURN", true) -> Color(0xFFFFB54A); buoy.isTurn -> Pink; else -> Mint }, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         Text(String.format(Locale.US, "%.4f, %.4f", buoy.latitude, buoy.longitude), color = Quiet, fontSize = 7.sp)
                     }
                     Text("×", color = Pink, fontSize = 18.sp, modifier = Modifier.clickable { onDelete(buoy.id) }.padding(horizontal = 4.dp))

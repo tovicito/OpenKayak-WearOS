@@ -20,9 +20,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -49,6 +49,7 @@ fun PhoneMapPicker(
     onPick: (LatLon) -> Unit
 ) {
     val context = LocalContext.current
+    val tileSizePx = with(LocalDensity.current) { 256.dp.toPx() }
     var centerLat by remember(center) { mutableDoubleStateOf(center.latitude) }
     var centerLon by remember(center) { mutableDoubleStateOf(center.longitude) }
     var zoom by remember { mutableIntStateOf(PhoneDataStore.mapZoom(context)) }
@@ -80,29 +81,30 @@ fun PhoneMapPicker(
         .pointerInput(zoom) {
             detectDragGestures { change, delta ->
                 change.consume()
-                val moved = tileToGeo(tileX(centerLon, zoom) - delta.x / 256.0,
-                    tileY(centerLat, zoom) - delta.y / 256.0, zoom)
+                val moved = tileToGeo(tileX(centerLon, zoom) - delta.x / tileSizePx.toDouble(),
+                    tileY(centerLat, zoom) - delta.y / tileSizePx.toDouble(), zoom)
                 centerLat = moved.latitude
                 centerLon = moved.longitude
             }
         }
         .pointerInput(zoom) {
             detectTapGestures { tap ->
-                val target = tileToGeo(tileX(centerLon, zoom) + (tap.x - size.width / 2.0) / 256.0,
-                    tileY(centerLat, zoom) + (tap.y - size.height / 2.0) / 256.0, zoom)
+                val target = tileToGeo(tileX(centerLon, zoom) + (tap.x - size.width / 2.0) / tileSizePx.toDouble(),
+                    tileY(centerLat, zoom) + (tap.y - size.height / 2.0) / tileSizePx.toDouble(), zoom)
                 onPick(target)
             }
         }
     ) {
         Canvas(Modifier.fillMaxSize()) {
+            val tileSize = tileSizePx
             tiles.forEach { tile ->
-                val left = ((tile.x - worldX) * 256.0 + size.width / 2.0).toInt()
-                val top = ((tile.y - worldY) * 256.0 + size.height / 2.0).toInt()
-                drawImage(tile.image, dstOffset = IntOffset(left, top), dstSize = IntSize(256, 256))
+                val left = ((tile.x - worldX) * tileSize + size.width / 2.0).toInt()
+                val top = ((tile.y - worldY) * tileSize + size.height / 2.0).toInt()
+                drawImage(tile.image, dstOffset = IntOffset(left, top), dstSize = IntSize(tileSize.toInt(), tileSize.toInt()))
             }
             fun screen(point: LatLon) = Offset(
-                ((tileX(point.longitude, zoom) - worldX) * 256.0 + size.width / 2.0).toFloat(),
-                ((tileY(point.latitude, zoom) - worldY) * 256.0 + size.height / 2.0).toFloat()
+                ((tileX(point.longitude, zoom) - worldX) * tileSize + size.width / 2.0).toFloat(),
+                ((tileY(point.latitude, zoom) - worldY) * tileSize + size.height / 2.0).toFloat()
             )
             for (index in 1 until route.size) drawLine(Color(0xFF42D9FF), screen(route[index - 1]), screen(route[index]), 4f)
             buoys.forEach { buoy ->

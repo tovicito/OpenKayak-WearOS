@@ -62,6 +62,7 @@ class WearSyncService : WearableListenerService() {
                     data.getFloat("gpsAccuracyLimitM", AppSettingsStore.gpsAccuracyLimit(this))
                 )
             }
+            path == "/openkayak/import/circuit/delete" -> CircuitStore.clear(this)
             path.startsWith("/openkayak/import/circuit/") -> {
                 val asset = data.getAsset("gpx") ?: return
                 val source = readAsset(asset) ?: return

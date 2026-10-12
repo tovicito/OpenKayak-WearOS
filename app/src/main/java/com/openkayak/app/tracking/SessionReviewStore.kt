@@ -119,6 +119,15 @@ object CircuitStore {
         }.getOrDefault(false)
     }
 
+    fun clear(context: Context) {
+        file(context)?.let { runCatching { it.delete() } }
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove("track_path").remove("saved_at").remove("label").apply()
+        cachedPath = null
+        cachedModified = -1L
+        cachedPoints = emptyList()
+    }
+
     fun points(context: Context): List<GeoSample> {
         val path = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("track_path", null) ?: return emptyList()
         val file = File(path); if (!file.exists()) return emptyList()
