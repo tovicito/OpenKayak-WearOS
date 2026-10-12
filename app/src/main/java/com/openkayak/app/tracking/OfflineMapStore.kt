@@ -41,10 +41,13 @@ object OfflineMapStore {
     }
 
     fun attribution(context: Context): String {
-        val db = database(context) ?: return "© OpenStreetMap contributors"
-        return readMetadata(db, "attribution")
+        val providerAttribution = database(context)?.let { readMetadata(it, "attribution") }
             ?.takeIf { it.isNotBlank() }
-            ?: "Atribución MBTiles no disponible"
+        return when {
+            providerAttribution == null -> "© OpenStreetMap contributors"
+            providerAttribution.contains("openstreetmap", ignoreCase = true) -> providerAttribution
+            else -> "$providerAttribution · © OpenStreetMap contributors"
+        }
     }
 
     /**
