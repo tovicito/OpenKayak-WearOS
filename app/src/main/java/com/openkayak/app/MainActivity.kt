@@ -69,8 +69,10 @@ import com.openkayak.app.tracking.AthleteProfileStore
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val Night = Color(0xFF05090D)
 private val Panel = Color(0xFF101820)
@@ -145,6 +147,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     var page by remember { mutableIntStateOf(0) }
     var showFinishConfirm by remember { mutableStateOf(false) }
     var healthStatus by remember { mutableStateOf("Health Connect: comprobando…") }
+    var mapPackStatus by remember { mutableStateOf(OfflineMapStore.status(context)) }
     var savedBuoys by remember { mutableStateOf(BuoyStore.all(context)) }
     var pendingReview by remember { mutableStateOf(SessionReviewStore.pending(context)) }
 
@@ -153,6 +156,22 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     ) { granted ->
         healthStatus = if (granted.containsAll(HealthConnectSync.permissions))
             "Health Connect: listo" else "Health Connect: faltan permisos"
+    }
+
+    val offlineMapPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) permissionScope.launch {
+            mapPackStatus = "Importando mapa offline…"
+            val result = withContext(Dispatchers.IO) {
+                runCatching { OfflineMapStore.importMbtiles(context, uri) }
+            }
+            result.onSuccess {
+                mapPackStatus = OfflineMapStore.status(context)
+                Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            }.onFailure {
+                mapPackStatus = it.message ?: "No se pudo importar el paquete offline."
+                Toast.makeText(context, mapPackStatus, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     fun checkHealthPermissions() {
@@ -275,7 +294,9 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                     isAmbient = isAmbient,
                     onHealthPermissions = { checkHealthPermissions() },
                     onSync = { enqueueSync(context) },
-                    onExport = { exportGpx(context) }
+                    onExport = { exportGpx(context) },
+                    mapPackStatus = mapPackStatus,
+                    onImportOfflineMap = { offlineMapPicker.launch(arrayOf("*/*")) }
                 )
                 else -> HistoryPage(context, isAmbient)
             }
@@ -670,7 +691,9 @@ private fun SettingsPage(
     isAmbient: Boolean,
     onHealthPermissions: () -> Unit,
     onSync: () -> Unit,
-    onExport: () -> Unit
+    onExport: () -> Unit,
+    mapPackStatus: String,
+    onImportOfflineMap: () -> Unit
 ) {
     var weightText by remember { mutableStateOf(String.format(Locale.US, "%.1f", AthleteProfileStore.weightKg(context))) }
     var ageText by remember { mutableStateOf(AthleteProfileStore.ageYears(context).toString()) }
@@ -705,6 +728,14 @@ private fun SettingsPage(
             ActionPill("SINCRONIZAR SESIÓN", Panel2, Ice, onSync, Modifier.fillMaxWidth())
             Spacer(Modifier.height(4.dp))
             ActionPill("COMPARTIR RUTA GPX", Panel2, Mint, onExport, Modifier.fillMaxWidth())
+            Spacer(Modifier.height(9.dp))
+            Text("MAPA SIN CONEXIÓN", color = Ice, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+            Text(mapPackStatus, color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            Text("Importa un paquete MBTiles raster pequeño que permita uso offline y declare su atribución. Las teselas vistas con Internet también se conservan en el reloj.",
+                color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            ActionPill("IMPORTAR MAPA MBTILES", Panel2, Mint, onImportOfflineMap, Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(8.dp))
         Text("AOD: negro puro, cifras de alto contraste y refresco reducido. «SALIR AOD» solicita despertar la pantalla; el sistema puede exigir un toque para reactivarla.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
