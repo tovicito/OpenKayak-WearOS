@@ -75,4 +75,4 @@ jobs:
             - SHA256SUMS.txt: hashes para verificar la descarga.
             Esta versión debe probarse en el agua antes de confiar en las métricas. Los datos de mapas usan OpenStreetMap.
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
