@@ -66,6 +66,7 @@ import com.openkayak.app.tracking.FinishedSession
 import com.openkayak.app.tracking.CircuitStore
 import com.openkayak.app.tracking.TurnMemoryStore
 import com.openkayak.app.tracking.AthleteProfileStore
+import com.openkayak.app.tracking.OfflineMapStore
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
