@@ -70,7 +70,7 @@ fun OnlineRouteMap(
         preferences.registerOnSharedPreferenceChangeListener(listener)
         onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    val routeLineColor = Color(routeColorHex.toLongOrNull(16) ?: 0xFFFF8500L)
+    val routeLineColor = Color((routeColorHex.toLongOrNull(16) ?: 0xFFFF8500L).toInt())
     val tileSizePx = with(LocalDensity.current) { 256.dp.toPx() }
     val firstPoint = points.firstOrNull()
     val routeKey = remember(firstPoint, points.size) {

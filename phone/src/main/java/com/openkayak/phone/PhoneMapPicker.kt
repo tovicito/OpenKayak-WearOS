@@ -111,7 +111,7 @@ fun PhoneMapPicker(
                 val start = screen(route[index - 1])
                 val end = screen(route[index])
                 drawLine(Color(0xE807111C), start, end, 7f)
-                drawLine(Color(routeColorHex.toLong(16)), start, end, 4f)
+                drawLine(Color(routeColorHex.toLong(16).toInt()), start, end, 4f)
             }
             buoys.forEach { buoy ->
                 drawCircle(if (buoy.type == "UTURN") Color(0xFFFFB54A) else Color(0xFFFF829B),

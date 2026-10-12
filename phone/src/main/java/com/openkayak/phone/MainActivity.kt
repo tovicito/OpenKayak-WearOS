@@ -334,7 +334,7 @@ private fun SettingsPage(
                     onClick = { onRouteColor(option.hex) },
                     label = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(color = Color(option.hex.toLong(16)), shape = RoundedCornerShape(50), modifier = Modifier.size(10.dp)) {}
+                            Surface(color = Color(option.hex.toLong(16).toInt()), shape = RoundedCornerShape(50), modifier = Modifier.size(10.dp)) {}
                             Spacer(Modifier.width(5.dp))
                             Text(option.label)
                         }
