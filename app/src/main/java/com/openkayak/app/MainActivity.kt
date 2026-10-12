@@ -492,7 +492,8 @@ private fun RoutePage(s: TrackSnapshot, points: List<GeoSample>, buoys: List<Sav
                 buoys = buoys,
                 latitude = s.latitude,
                 longitude = s.longitude,
-                ambient = ambient
+                ambient = ambient,
+                followPosition = s.active && !s.paused
             )
         }
         Spacer(Modifier.height(7.dp))
@@ -505,7 +506,7 @@ private fun RoutePage(s: TrackSnapshot, points: List<GeoSample>, buoys: List<Sav
                 color = Color.White, fontSize = 10.sp, textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(4.dp))
-        Text("Mapa online · cian: recorrido · rosa: giros detectados · verde: puntos guardados", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
+        Text("Mapa online · cian: recorrido · rosa: boyas · naranja: U-turns", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
         Text("El mapa necesita conexión a Internet; el trazado GPS se guarda localmente.", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
     }
 }
@@ -606,7 +607,7 @@ private fun AmbientDashboard(s: TrackSnapshot, ble: BleHrState, points: List<Geo
         Spacer(Modifier.height(5.dp))
         Box(Modifier.size(132.dp).clip(CircleShape).background(Color.Black)) {
             OnlineRouteMap(points = points, buoys = buoys, latitude = s.latitude ?: points.lastOrNull()?.latitude,
-                longitude = s.longitude ?: points.lastOrNull()?.longitude, ambient = true, allowNetwork = false)
+                longitude = s.longitude ?: points.lastOrNull()?.longitude, ambient = true, allowNetwork = false, followPosition = s.active && !s.paused)
             Canvas(Modifier.fillMaxSize()) {
                 drawCircle(brush = Brush.radialGradient(
                     0.0f to Color.Transparent,
@@ -646,7 +647,7 @@ private fun FinishReviewDialog(review: FinishedSession, onSaveBoth: () -> Unit, 
             Text(if (review.turns.any { it.repetitions >= 2 }) review.turns.count { it.repetitions >= 2 }.toString() + " posibles boyas repetidas" else "Boyas inferidas del recorrido GPS", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
             if (review.isCircuit) Text("Posible circuito cerrado detectado", color = Mint, fontSize = 8.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
-            Box(Modifier.fillMaxWidth().height(104.dp).clip(RoundedCornerShape(15.dp)).background(Night)) {
+            Box(Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(15.dp)).background(Night)) {
                 OnlineRouteMap(points = review.points, buoys = review.turns, latitude = review.points.lastOrNull()?.latitude,
                     longitude = review.points.lastOrNull()?.longitude, ambient = false, allowNetwork = true)
             }
@@ -707,7 +708,7 @@ private fun SettingsPage(
         }
         Spacer(Modifier.height(8.dp))
         Text("AOD: negro puro, cifras de alto contraste y refresco reducido. «SALIR AOD» solicita despertar la pantalla; el sistema puede exigir un toque para reactivarla.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
-        Text("Versión 2.0 preview · Wear OS 5 · Material 3 Expressive", color = if (isAmbient) Color.DarkGray else Quiet,
+        Text("Versión 2.1 · Wear OS 5 · mapa interactivo", color = if (isAmbient) Color.DarkGray else Quiet,
             fontSize = 7.sp, textAlign = TextAlign.Center)
     }
 }

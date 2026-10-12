@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "OpenKayak-WearOS"
-include ':app'
+include ':app', ':phone'

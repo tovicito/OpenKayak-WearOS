@@ -1,36 +1,45 @@
 package com.openkayak.app.tracking
 
+import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.consume
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Text
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.net.URL
 import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.sinh
 
-private data class MapTile(val x: Int, val y: Int, val image: androidx.compose.ui.graphics.ImageBitmap)
+private data class RouteMapTile(val x: Int, val y: Int, val image: androidx.compose.ui.graphics.ImageBitmap)
 
-private object MapTileCache {
+private object RouteMapTileCache {
     private val values = object : LinkedHashMap<String, androidx.compose.ui.graphics.ImageBitmap>(48, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, androidx.compose.ui.graphics.ImageBitmap>?): Boolean = size > 48
     }
@@ -45,91 +54,167 @@ fun OnlineRouteMap(
     latitude: Double?,
     longitude: Double?,
     ambient: Boolean,
-    allowNetwork: Boolean = true
+    allowNetwork: Boolean = true,
+    followPosition: Boolean = false
 ) {
-    val center = points.lastOrNull()
-    val lat = latitude ?: center?.latitude
-    val lon = longitude ?: center?.longitude
-    val zoom = 16
-    val centerX = if (lat != null && lon != null) floor(tileX(lon, zoom)).toInt() else -1
-    val centerY = if (lat != null && lon != null) floor(tileY(lat, zoom)).toInt() else -1
-    var tiles by remember { mutableStateOf<List<MapTile>>(emptyList()) }
-    var mapStatus by remember { mutableStateOf("Esperando posición GPS") }
+    val context = LocalContext.current
+    val firstPoint = points.firstOrNull()
+    val routeKey = remember(firstPoint, points.size) {
+        if (points.isEmpty()) 0 else 31 * points.size + points.first().hashCode()
+    }
+    val boundsCenter = remember(routeKey) {
+        if (points.isEmpty()) null else GeoSample(
+            (points.minOf { it.latitude } + points.maxOf { it.latitude }) / 2.0,
+            (points.minOf { it.longitude } + points.maxOf { it.longitude }) / 2.0
+        )
+    }
+    var centerLat by remember(routeKey, followPosition) {
+        mutableDoubleStateOf(if (!followPosition && boundsCenter != null) boundsCenter.latitude else latitude ?: boundsCenter?.latitude ?: 43.55)
+    }
+    var centerLon by remember(routeKey, followPosition) {
+        mutableDoubleStateOf(if (!followPosition && boundsCenter != null) boundsCenter.longitude else longitude ?: boundsCenter?.longitude ?: -5.92)
+    }
+    var zoom by remember { mutableIntStateOf(AppSettingsStore.mapZoom(context)) }
+    var userPanned by remember(routeKey) { mutableStateOf(false) }
+    var tiles by remember { mutableStateOf<List<RouteMapTile>>(emptyList()) }
+    var status by remember { mutableStateOf("Esperando posición GPS") }
 
-    LaunchedEffect(centerX, centerY, ambient, allowNetwork) {
-        if (ambient || !allowNetwork) {
-            tiles = emptyList()
-            mapStatus = if (points.isEmpty()) "Sin circuito guardado" else "Trazado guardado · AOD"
-        } else if (centerX < 0 || centerY < 0) {
-            tiles = emptyList()
-            mapStatus = "Inicia una sesión para cargar el mapa"
-        } else {
-            mapStatus = "Cargando mapa online…"
-            tiles = withContext(Dispatchers.IO) {
-                val loaded = mutableListOf<MapTile>()
-                for (dy in -1..1) {
-                    for (dx in -1..1) {
-                        val tx = centerX + dx
-                        val ty = centerY + dy
-                        val key = "$zoom/$tx/$ty"
-                        val cached = MapTileCache.get(key)
-                        val bitmap = cached ?: runCatching {
-                            val connection = URL("https://tile.openstreetmap.org/$zoom/$tx/$ty.png").openConnection()
-                            connection.connectTimeout = 2500
-                            connection.readTimeout = 2500
-                            connection.setRequestProperty("User-Agent", "OpenKayak-WearOS/2.1 (Wear OS kayaking app)")
-                            connection.getInputStream().use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
-                        }.getOrNull()?.also { MapTileCache.put(key, it) }
-                        if (bitmap != null) loaded.add(MapTile(tx, ty, bitmap))
-                        if (cached == null) delay(600L)
-                    }
-                }
-                loaded
-            }
-            mapStatus = if (tiles.isEmpty()) "Sin conexión: mapa no disponible" else "Mapa OpenStreetMap · zoom $zoom"
+    LaunchedEffect(latitude, longitude, followPosition, userPanned) {
+        if (followPosition && !userPanned && latitude != null && longitude != null) {
+            centerLat = latitude
+            centerLon = longitude
         }
     }
 
-    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(22.dp)).background(if (ambient) Color.Black else Color(0xFF101820))) {
+    val centerX = tileX(centerLon, zoom)
+    val centerY = tileY(centerLat, zoom)
+    val centerTileX = floor(centerX).toInt()
+    val centerTileY = floor(centerY).toInt()
+
+    LaunchedEffect(centerTileX, centerTileY, zoom, allowNetwork, ambient) {
+        status = "Cargando mosaicos…"
+        val loaded = withContext(Dispatchers.IO) {
+            val result = mutableListOf<RouteMapTile>()
+            for (dy in -1..1) for (dx in -1..1) {
+                val x = centerTileX + dx
+                val y = centerTileY + dy
+                if (y !in 0 until (1 shl zoom)) continue
+                loadRouteTile(context, zoom, x, y, allowNetwork && !ambient)?.let { result.add(RouteMapTile(x, y, it)) }
+                if (allowNetwork && !ambient) delay(80L)
+            }
+            result
+        }
+        tiles = loaded
+        status = when {
+            loaded.isNotEmpty() && (!allowNetwork || ambient) -> "Mapa guardado · sin red"
+            loaded.isNotEmpty() -> "OpenStreetMap · Z$zoom · arrastra para mover"
+            points.isEmpty() -> "Mapa no descargado · inicia con Internet"
+            else -> "Sin mosaicos guardados · conecta a Internet"
+        }
+    }
+
+    val dragModifier = if (!ambient) Modifier.pointerInput(zoom) {
+        detectDragGestures { change, dragAmount ->
+            change.consume()
+            val worldX = tileX(centerLon, zoom) - dragAmount.x / 256.0
+            val worldY = tileY(centerLat, zoom) - dragAmount.y / 256.0
+            val moved = geoAtTile(worldX, worldY, zoom)
+            centerLat = moved.latitude
+            centerLon = moved.longitude
+            userPanned = true
+        }
+    } else Modifier
+
+    Box(Modifier.fillMaxSize().then(dragModifier).clip(RoundedCornerShape(22.dp))
+        .background(if (ambient) Color.Black else Color(0xFF101820))) {
         Canvas(Modifier.fillMaxSize()) {
-            val lat0 = lat
-            val lon0 = lon
-            if (lat0 != null && lon0 != null) {
-                val worldX = tileX(lon0, zoom)
-                val worldY = tileY(lat0, zoom)
-                val scale = density
-                val tileSize = 256f * scale
-                tiles.forEach { tile ->
-                    val left = (tile.x - worldX) * tileSize + size.width / 2f
-                    val top = (tile.y - worldY) * tileSize + size.height / 2f
-                    drawImage(tile.image, dstOffset = IntOffset(left.toInt(), top.toInt()), dstSize = IntSize(tileSize.toInt(), tileSize.toInt()))
+            // OSM tiles are 256 px; scaling them by display density distorts the map.
+            val tileSize = 256f
+            tiles.forEach { tile ->
+                val left = ((tile.x - centerX) * tileSize + size.width / 2f).toInt()
+                val top = ((tile.y - centerY) * tileSize + size.height / 2f).toInt()
+                drawImage(tile.image, dstOffset = IntOffset(left, top), dstSize = IntSize(256, 256))
+            }
+            fun screen(point: GeoSample): Offset = Offset(
+                ((tileX(point.longitude, zoom) - centerX) * tileSize + size.width / 2f).toFloat(),
+                ((tileY(point.latitude, zoom) - centerY) * tileSize + size.height / 2f).toFloat()
+            )
+            val track = points.map(::screen)
+            for (index in 1 until track.size) {
+                val a = track[index - 1]
+                val b = track[index]
+                if ((a.x in -40f..(size.width + 40f) || b.x in -40f..(size.width + 40f)) &&
+                    (a.y in -40f..(size.height + 40f) || b.y in -40f..(size.height + 40f))) {
+                    drawLine(Color(0xFF42D9FF), a, b, strokeWidth = 3.5f)
                 }
-                fun screen(latP: Double, lonP: Double): Offset {
-                    val x = (tileX(lonP, zoom) - worldX) * tileSize + size.width / 2f
-                    val y = (tileY(latP, zoom) - worldY) * tileSize + size.height / 2f
-                    return Offset(x.toFloat(), y.toFloat())
+            }
+            buoys.forEach { buoy ->
+                val color = when (buoy.turnType.uppercase()) {
+                    "UTURN", "U_TURN", "U-TURN" -> Color(0xFFFFB54A)
+                    "BUOY", "BOYA" -> Color(0xFFFF8FA3)
+                    else -> if (buoy.isTurn) Color(0xFFFF8FA3) else Color(0xFF76F4D0)
                 }
-                val track = points.map { screen(it.latitude, it.longitude) }
-                for (i in 1 until track.size) {
-                    drawLine(Color(0xFF42D9FF), track[i - 1], track[i], strokeWidth = 3.5f)
-                }
-                buoys.forEach { buoy ->
-                    drawCircle(if (buoy.isTurn) Color(0xFFFF8FA3) else Color(0xFF76F4D0), radius = 5f, center = screen(buoy.latitude, buoy.longitude))
-                }
-                drawCircle(Color.White, radius = 4f, center = Offset(size.width / 2f, size.height / 2f))
+                val radius = if (buoy.turnType.equals("UTURN", true)) 6f else 4.5f
+                drawCircle(color, radius, screen(GeoSample(buoy.latitude, buoy.longitude)))
             }
         }
-        if (tiles.isEmpty()) {
-            Text(mapStatus, modifier = Modifier.align(Alignment.Center), color = Color.White, fontSize = 8.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium)
-        } else {
-            Text("© OpenStreetMap", modifier = Modifier.align(Alignment.BottomEnd), color = Color.White, fontSize = 6.sp)
+        if (tiles.isEmpty()) Text(status, Modifier.align(Alignment.Center), color = Color.White,
+            fontSize = 8.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium)
+        Text("© OpenStreetMap", Modifier.align(Alignment.BottomStart).padding(3.dp), color = Color.White, fontSize = 6.sp)
+        if (!ambient) {
+            Row(Modifier.align(Alignment.TopEnd).background(Color(0xDD101820), RoundedCornerShape(12.dp))) {
+                Text("−", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable { zoom = (zoom - 1).coerceIn(14, 17); userPanned = true }
+                        .padding(horizontal = 10.dp, vertical = 3.dp))
+                Text("+", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable { zoom = (zoom + 1).coerceIn(14, 17); userPanned = true }
+                        .padding(horizontal = 10.dp, vertical = 3.dp))
+            }
         }
     }
 }
 
-private fun tileX(lon: Double, zoom: Int): Double = (lon + 180.0) / 360.0 * (1 shl zoom)
-private fun tileY(lat: Double, zoom: Int): Double {
-    val safe = lat.coerceIn(-85.0511, 85.0511)
-    val rad = Math.toRadians(safe)
-    return (1.0 - ln(sinh(rad) + 1.0 / kotlin.math.cosh(rad)) / Math.PI) / 2.0 * (1 shl zoom)
+private fun loadRouteTile(context: Context, zoom: Int, x: Int, y: Int, allowNetwork: Boolean): androidx.compose.ui.graphics.ImageBitmap? {
+    val count = 1 shl zoom
+    val wrappedX = ((x % count) + count) % count
+    val key = "$zoom/$wrappedX/$y"
+    RouteMapTileCache.get(key)?.let { return it }
+    val directory = File(context.cacheDir, "openkayak-map-tiles").apply { mkdirs() }
+    val file = File(directory, "$zoom-$wrappedX-$y.png")
+    if (file.isFile && file.length() > 0L) {
+        val cached = runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
+        if (cached != null) { RouteMapTileCache.put(key, cached); return cached }
+    }
+    if (!allowNetwork) return null
+    val bitmap = runCatching {
+        val connection = URL("https://tile.openstreetmap.org/$zoom/$wrappedX/$y.png").openConnection()
+        connection.connectTimeout = 2500
+        connection.readTimeout = 2500
+        connection.setRequestProperty("User-Agent", "OpenKayak-WearOS/2.1 (https://github.com/tovicito/OpenKayak-WearOS)")
+        val bytes = connection.getInputStream().use { it.readBytes() }
+        file.writeBytes(bytes)
+        trimRouteTileCache(directory)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    }.getOrNull()
+    if (bitmap != null) RouteMapTileCache.put(key, bitmap)
+    return bitmap
+}
+
+private fun trimRouteTileCache(directory: File) {
+    val files = directory.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: return
+    files.drop(180).forEach { runCatching { it.delete() } }
+}
+
+private fun tileX(longitude: Double, zoom: Int): Double = (longitude + 180.0) / 360.0 * (1 shl zoom)
+private fun tileY(latitude: Double, zoom: Int): Double {
+    val safe = latitude.coerceIn(-85.0511, 85.0511)
+    val radians = Math.toRadians(safe)
+    return (1.0 - ln(kotlin.math.tan(radians) + 1.0 / kotlin.math.cos(radians)) / Math.PI) / 2.0 * (1 shl zoom)
+}
+private fun geoAtTile(x: Double, y: Double, zoom: Int): GeoSample {
+    val count = (1 shl zoom).toDouble()
+    val normalizedY = Math.PI - 2.0 * Math.PI * y / count
+    val latitude = Math.toDegrees(kotlin.math.atan(sinh(normalizedY))).coerceIn(-85.0511, 85.0511)
+    val longitude = (x / count * 360.0 - 180.0).coerceIn(-180.0, 180.0)
+    return GeoSample(latitude, longitude)
 }

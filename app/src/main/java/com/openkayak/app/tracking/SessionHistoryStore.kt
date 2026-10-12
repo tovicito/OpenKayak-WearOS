@@ -18,7 +18,7 @@ data class SessionSummary(
 object SessionHistoryStore {
     private const val PREFS = "openkayak_history"
     private const val KEY = "sessions"
-    private const val LIMIT = 30
+    private const val LIMIT = 5000
 
     fun all(context: Context): List<SessionSummary> =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

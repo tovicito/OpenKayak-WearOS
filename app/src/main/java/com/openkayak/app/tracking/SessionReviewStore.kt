@@ -63,9 +63,12 @@ object SessionReviewStore {
     fun saveWorkout(context: Context, r: FinishedSession) {
         SessionHistoryStore.record(context, r.startAt, r.endAt, r.elapsedMs, r.distanceM, r.strokes, r.trackPath,
             r.averageBpm, r.maxBpm, r.minBpm, r.calories)
+        com.openkayak.app.sync.WearSyncBridge.publishWorkout(context, r.startAt)
     }
     fun saveCircuit(context: Context, r: FinishedSession) {
         CircuitStore.save(context, r); BuoyStore.saveDetectedTurns(context, r.turns)
+        com.openkayak.app.sync.WearSyncBridge.publishCircuit(context)
+        com.openkayak.app.sync.WearSyncBridge.publishBuoys(context)
     }
     fun complete(context: Context, r: FinishedSession, keepWorkout: Boolean) {
         if (!keepWorkout && r.trackPath.isNotBlank()) runCatching { File(r.trackPath).delete() }
@@ -100,6 +103,22 @@ object CircuitStore {
             .putLong("saved_at", r.endAt).putString("label", if (r.isCircuit) "Circuito repetido" else "Último recorrido").apply()
         cachedPath = null
     }
+    fun file(context: Context): File? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getString("track_path", null)?.let(::File)?.takeIf { it.isFile }
+
+    fun importFile(context: Context, source: File, label: String = "Circuito importado"): Boolean {
+        if (!source.isFile || source.length() <= 0L) return false
+        val target = File(context.filesDir, "circuito-importado-" + System.currentTimeMillis() + ".gpx")
+        return runCatching {
+            source.copyTo(target, overwrite = true)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("track_path", target.absolutePath).putLong("saved_at", System.currentTimeMillis())
+                .putString("label", label.take(80)).apply()
+            cachedPath = null
+            true
+        }.getOrDefault(false)
+    }
+
     fun points(context: Context): List<GeoSample> {
         val path = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("track_path", null) ?: return emptyList()
         val file = File(path); if (!file.exists()) return emptyList()

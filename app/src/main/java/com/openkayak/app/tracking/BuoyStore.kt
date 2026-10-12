@@ -65,6 +65,12 @@ object BuoyStore {
         save(context, items)
     }
 
+    fun replaceAll(context: Context, items: List<SavedBuoy>) {
+        val valid = items.filter { it.latitude.isFinite() && it.longitude.isFinite() && it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 }
+            .distinctBy { it.id }
+        save(context, valid)
+    }
+
     fun remove(context: Context, id: Long) {
         save(context, all(context).filterNot { it.id == id })
     }

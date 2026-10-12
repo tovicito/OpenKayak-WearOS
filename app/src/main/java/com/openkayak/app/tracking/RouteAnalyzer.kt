@@ -6,81 +6,164 @@ import java.time.Instant
 import kotlin.math.abs
 import kotlin.math.ceil
 
-data class RouteAnalysis(val points: List<GeoSample>, val turns: List<SavedBuoy>, val repeatedBuoyCount: Int, val isCircuit: Boolean)
+data class RouteAnalysis(
+    val points: List<GeoSample>,
+    val turns: List<SavedBuoy>,
+    val repeatedBuoyCount: Int,
+    val isCircuit: Boolean
+)
 
+/**
+ * Conservative post-session geometry analysis.
+ * Small GPS heading corrections are filtered out; sustained turns and U-turns are retained.
+ */
 object RouteAnalyzer {
     private data class TimedPoint(val point: GeoSample, val timeMs: Long)
-    private data class Cluster(var latSum: Double, var lonSum: Double, var count: Int, var type: String, var angle: Double)
-    private val pointRegex = Regex("""<trkpt lat="([^"]+)" lon="([^"]+)"><time>([^<]+)</time></trkpt>""")
+    private data class Candidate(val point: GeoSample, val timeMs: Long, val angle: Double, val type: String)
+    private data class Cluster(
+        var latSum: Double,
+        var lonSum: Double,
+        var count: Int,
+        var type: String,
+        var angle: Double,
+        var lastTimeMs: Long
+    ) {
+        val latitude get() = latSum / count
+        val longitude get() = lonSum / count
+    }
+
+    private const val MAX_MAP_POINTS = 14_000
+    private const val TURN_BASELINE_METERS = 12.0
+    private const val TURN_THRESHOLD_DEGREES = 62.0
+    private const val UTURN_THRESHOLD_DEGREES = 145.0
+    private const val EVENT_COOLDOWN_MS = 22_000L
+    private const val EVENT_COOLDOWN_METERS = 22.0
+    private const val CLUSTER_RADIUS_METERS = 20.0
+    private const val MIN_REPEAT_INTERVAL_MS = 40_000L
+
+    private val pointRegex = Regex(
+        """<trkpt\b[^>]*\blat="([^"]+)"[^>]*\blon="([^"]+)"[^>]*>.*?<time>([^<]+)</time>.*?</trkpt>""",
+        setOf(RegexOption.DOT_MATCHES_ALL)
+    )
 
     fun analyze(file: File?): RouteAnalysis {
         if (file == null || !file.isFile) return RouteAnalysis(emptyList(), emptyList(), 0, false)
         val timed = runCatching {
-            pointRegex.findAll(file.readText()).mapNotNull { m ->
-                val lat = m.groupValues[1].toDoubleOrNull() ?: return@mapNotNull null
-                val lon = m.groupValues[2].toDoubleOrNull() ?: return@mapNotNull null
-                val time = runCatching { Instant.parse(m.groupValues[3]).toEpochMilli() }.getOrDefault(0L)
-                if (lat !in -90.0..90.0 || lon !in -180.0..180.0) null else TimedPoint(GeoSample(lat, lon), time)
+            pointRegex.findAll(file.readText()).mapNotNull { match ->
+                val lat = match.groupValues[1].toDoubleOrNull() ?: return@mapNotNull null
+                val lon = match.groupValues[2].toDoubleOrNull() ?: return@mapNotNull null
+                val timestamp = runCatching { Instant.parse(match.groupValues[3]).toEpochMilli() }.getOrDefault(0L)
+                if (lat !in -90.0..90.0 || lon !in -180.0..180.0 || timestamp <= 0L) null
+                else TimedPoint(GeoSample(lat, lon), timestamp)
             }.toList()
         }.getOrDefault(emptyList())
-        val cleaned = ArrayList<TimedPoint>()
+
+        val cleaned = ArrayList<TimedPoint>(timed.size)
         timed.forEach { next ->
-            val last = cleaned.lastOrNull()
-            if (last == null) cleaned.add(next) else {
-                val dist = distance(last.point, next.point)
-                val dt = ((next.timeMs - last.timeMs).coerceAtLeast(1L)) / 1000.0
-                if (dt > 0 && dist / dt <= 18.0 && (dist >= 0.35 || next.timeMs - last.timeMs >= 4_000L)) cleaned.add(next)
+            val previous = cleaned.lastOrNull()
+            if (previous == null) cleaned.add(next) else {
+                val elapsedMs = next.timeMs - previous.timeMs
+                if (elapsedMs <= 0L) return@forEach
+                val dist = distance(previous.point, next.point)
+                val speed = dist / (elapsedMs / 1000.0)
+                // A kayak track should not contain GNSS teleport spikes.
+                if (speed <= 8.0 && (dist >= 0.65 || elapsedMs >= 5_000L)) cleaned.add(next)
             }
         }
-        val turns = detectTurns(cleaned)
-        val totalM = cleaned.zipWithNext().sumOf { distance(it.first.point, it.second.point) }
-        val closingDistance = if (cleaned.size > 2) distance(cleaned.first().point, cleaned.last().point) else Double.MAX_VALUE
+
+        val turns = clusterRepeatVisits(detectTurnCandidates(cleaned))
+        val totalMeters = cleaned.zipWithNext().sumOf { distance(it.first.point, it.second.point) }
+        val closingMeters = if (cleaned.size >= 3) distance(cleaned.first().point, cleaned.last().point) else Double.MAX_VALUE
         val repeated = turns.count { it.repetitions >= 2 }
-        return RouteAnalysis(downsample(cleaned.map { it.point }, 2200), turns, repeated,
-            totalM > 250.0 && closingDistance < 60.0 && repeated >= 2)
+        val circuit = totalMeters > 250.0 && closingMeters < maxOf(25.0, totalMeters * 0.04) && turns.size >= 3
+        return RouteAnalysis(downsample(cleaned.map { it.point }, MAX_MAP_POINTS), turns, repeated, circuit)
     }
 
-    private fun detectTurns(points: List<TimedPoint>): List<SavedBuoy> {
-        if (points.size < 5) return emptyList()
-        val events = ArrayList<SavedBuoy>()
-        for (i in 4 until points.size) {
-            val before = points[i - 4]; val pivot = points[i - 2]; val after = points[i]
-            val seconds = (after.timeMs - before.timeMs) / 1000.0
-            if (seconds !in 2.0..15.0) continue
-            val d1 = distance(before.point, pivot.point); val d2 = distance(pivot.point, after.point)
-            if (d1 < 2.0 || d2 < 2.0 || (d1 + d2) / seconds < 0.55) continue
-            val angle = abs(((bearing(pivot.point, after.point) - bearing(before.point, pivot.point) + 540.0) % 360.0) - 180.0)
-            if (angle < 10.0) continue
-            val type = when { angle >= 160.0 -> "UTURN"; angle >= 25.0 -> "TURN"; else -> "CORRECTION" }
-            val timestamp = pivot.timeMs
-            val nearRecent = events.lastOrNull()?.let { old ->
-                timestamp - old.id < 12_000L && distance(GeoSample(old.latitude, old.longitude), pivot.point) < 10.0
-            } ?: false
-            if (!nearRecent) events.add(SavedBuoy(timestamp, pivot.point.latitude, pivot.point.longitude, true, type, angle, 1))
+    private fun detectTurnCandidates(points: List<TimedPoint>): List<Candidate> {
+        if (points.size < 6) return emptyList()
+        val candidates = ArrayList<Candidate>()
+        var lastKept: Candidate? = null
+        for (pivotIndex in 2 until points.lastIndex - 2) {
+            val beforeIndex = indexAtDistance(points, pivotIndex, -1, TURN_BASELINE_METERS) ?: continue
+            val afterIndex = indexAtDistance(points, pivotIndex, 1, TURN_BASELINE_METERS) ?: continue
+            val before = points[beforeIndex]
+            val pivot = points[pivotIndex]
+            val after = points[afterIndex]
+            val beforeSeconds = (pivot.timeMs - before.timeMs) / 1000.0
+            val afterSeconds = (after.timeMs - pivot.timeMs) / 1000.0
+            if (beforeSeconds !in 2.0..35.0 || afterSeconds !in 2.0..35.0) continue
+            val inbound = bearing(before.point, pivot.point)
+            val outbound = bearing(pivot.point, after.point)
+            val angle = abs(((outbound - inbound + 540.0) % 360.0) - 180.0)
+            // Corrections and ordinary GPS course noise never become stored buoy candidates.
+            if (angle < TURN_THRESHOLD_DEGREES) continue
+            val candidate = Candidate(pivot.point, pivot.timeMs, angle,
+                if (angle >= UTURN_THRESHOLD_DEGREES) "UTURN" else "BUOY")
+            val previous = lastKept
+            if (previous != null && pivot.timeMs - previous.timeMs < EVENT_COOLDOWN_MS &&
+                distance(previous.point, pivot.point) < EVENT_COOLDOWN_METERS) continue
+            candidates.add(candidate)
+            lastKept = candidate
         }
+        return candidates
+    }
+
+    private fun indexAtDistance(points: List<TimedPoint>, pivotIndex: Int, direction: Int, targetMeters: Double): Int? {
+        var walked = 0.0
+        var index = pivotIndex
+        var steps = 0
+        while (true) {
+            val next = index + direction
+            if (next !in points.indices || steps++ > 90) return null
+            walked += distance(points[index].point, points[next].point)
+            index = next
+            if (walked >= targetMeters) return index
+        }
+    }
+
+    private fun clusterRepeatVisits(candidates: List<Candidate>): List<SavedBuoy> {
         val clusters = ArrayList<Cluster>()
-        events.forEach { event ->
-            val point = GeoSample(event.latitude, event.longitude)
-            val cluster = clusters.firstOrNull { distance(GeoSample(it.latSum / it.count, it.lonSum / it.count), point) < 18.0 }
-            if (cluster == null) clusters.add(Cluster(event.latitude, event.longitude, 1, event.turnType, event.angleDegrees))
-            else {
-                cluster.latSum += event.latitude; cluster.lonSum += event.longitude; cluster.count++
-                if (event.angleDegrees > cluster.angle) { cluster.angle = event.angleDegrees; cluster.type = event.turnType }
+        candidates.forEach { candidate ->
+            val nearby = clusters.firstOrNull {
+                distance(GeoSample(it.latitude, it.longitude), candidate.point) <= CLUSTER_RADIUS_METERS
+            }
+            if (nearby == null) {
+                clusters.add(Cluster(candidate.point.latitude, candidate.point.longitude, 1,
+                    candidate.type, candidate.angle, candidate.timeMs))
+            } else if (candidate.timeMs - nearby.lastTimeMs >= MIN_REPEAT_INTERVAL_MS) {
+                // Only a later, distinct pass adds a repetition, not every GPS fix inside one turn.
+                nearby.latSum += candidate.point.latitude
+                nearby.lonSum += candidate.point.longitude
+                nearby.count++
+                nearby.lastTimeMs = candidate.timeMs
+                if (candidate.type == "UTURN" || candidate.angle > nearby.angle) {
+                    nearby.type = candidate.type
+                    nearby.angle = candidate.angle
+                }
             }
         }
         return clusters.mapIndexed { index, c ->
-            SavedBuoy(index + 1L, c.latSum / c.count, c.lonSum / c.count, true, c.type, c.angle, c.count)
+            SavedBuoy(index + 1L, c.latitude, c.longitude, true, c.type, c.angle, c.count)
         }
     }
+
     private fun distance(a: GeoSample, b: GeoSample): Double {
-        val out = FloatArray(1); Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, out); return out[0].toDouble()
+        val out = FloatArray(1)
+        Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, out)
+        return out[0].toDouble()
     }
+
     private fun bearing(a: GeoSample, b: GeoSample): Double {
-        val out = FloatArray(2); Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, out); return (out[1].toDouble() + 360f) % 360.0
+        val out = FloatArray(2)
+        Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, out)
+        return (out[1].toDouble() + 360.0) % 360.0
     }
-    private fun downsample(points: List<GeoSample>, max: Int): List<GeoSample> {
-        if (points.size <= max) return points
-        val step = ceil(points.size.toDouble() / max).toInt().coerceAtLeast(1)
-        return points.filterIndexed { index, _ -> index % step == 0 || index == points.lastIndex }
+
+    private fun downsample(points: List<GeoSample>, maximum: Int): List<GeoSample> {
+        if (points.size <= maximum) return points
+        val step = ceil((points.size - 1).toDouble() / (maximum - 1)).toInt().coerceAtLeast(1)
+        val sampled = points.filterIndexed { index, _ -> index % step == 0 }.toMutableList()
+        if (sampled.lastOrNull() != points.last()) sampled.add(points.last())
+        return sampled.take(maximum - 1) + points.last()
     }
 }

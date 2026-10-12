@@ -116,7 +116,7 @@ object TrackStore {
     fun recordLocation(context: Context, location: Location): Boolean = synchronized(lock) {
         val p = prefs(context)
         if (!p.getBoolean("active", false) || p.getBoolean("paused", false)) return false
-        if (location.hasAccuracy() && location.accuracy > 65f) {
+        if (location.hasAccuracy() && location.accuracy > AppSettingsStore.gpsAccuracyLimit(context)) {
             p.edit().putString("gps_status", "Precisión baja").apply()
             return false
         }
