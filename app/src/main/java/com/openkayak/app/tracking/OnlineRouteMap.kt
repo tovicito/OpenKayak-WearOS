@@ -109,8 +109,8 @@ fun OnlineRouteMap(
         status = when {
             loaded.isNotEmpty() && (!allowNetwork || ambient) -> "Mapa guardado · sin red"
             loaded.isNotEmpty() -> "OpenStreetMap · Z$zoom · arrastra para mover"
-            points.isEmpty() -> "Mapa no descargado · inicia con Internet"
-            else -> "Sin mosaicos guardados · conecta a Internet"
+            points.isEmpty() -> "Sin teselas: conecta a Internet o importa MBTiles"
+            else -> "Sin teselas guardadas: conecta a Internet o importa MBTiles"
         }
     }
 
@@ -161,7 +161,7 @@ fun OnlineRouteMap(
         }
         if (tiles.isEmpty()) Text(status, Modifier.align(Alignment.Center), color = Color.White,
             fontSize = 8.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium)
-        Text("© OpenStreetMap", Modifier.align(Alignment.BottomStart).padding(3.dp), color = Color.White, fontSize = 6.sp)
+        Text(remember { OfflineMapStore.attribution(context) }, Modifier.align(Alignment.BottomStart).padding(3.dp), color = Color.White, fontSize = 6.sp, maxLines = 1)
         if (!ambient) {
             Row(Modifier.align(Alignment.TopEnd).background(Color(0xDD101820), RoundedCornerShape(12.dp))) {
                 Text("−", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
@@ -179,11 +179,21 @@ private fun loadRouteTile(context: Context, zoom: Int, x: Int, y: Int, allowNetw
     val count = 1 shl zoom
     val wrappedX = ((x % count) + count) % count
     val key = "$zoom/$wrappedX/$y"
+    // Imported provider-supplied MBTiles is authoritative for tiles it contains.
+    val imported = OfflineMapStore.tileBytes(context, zoom, wrappedX, y)
+    if (imported != null) {
+        val image = runCatching { BitmapFactory.decodeByteArray(imported, 0, imported.size)?.asImageBitmap() }.getOrNull()
+        if (image != null) { RouteMapTileCache.put(key, image); return image }
+    }
     RouteMapTileCache.get(key)?.let { return it }
-    val directory = File(context.cacheDir, "openkayak-map-tiles").apply { mkdirs() }
+
+    // Persistent disk cache keeps only tiles requested by normal interactive viewing.
+    val directory = OfflineMapStore.cacheDirectory(context)
     val file = File(directory, "$zoom-$wrappedX-$y.png")
-    if (file.isFile && file.length() > 0L) {
-        val cached = runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
+    val legacyFile = File(context.cacheDir, "openkayak-map-tiles/$zoom-$wrappedX-$y.png")
+    val existingFile = listOf(file, legacyFile).firstOrNull { it.isFile && it.length() > 0L }
+    if (existingFile != null) {
+        val cached = runCatching { BitmapFactory.decodeFile(existingFile.absolutePath)?.asImageBitmap() }.getOrNull()
         if (cached != null) { RouteMapTileCache.put(key, cached); return cached }
     }
     if (!allowNetwork) return null
@@ -194,16 +204,11 @@ private fun loadRouteTile(context: Context, zoom: Int, x: Int, y: Int, allowNetw
         connection.setRequestProperty("User-Agent", "OpenKayak-WearOS/2.1 (https://github.com/tovicito/OpenKayak-WearOS)")
         val bytes = connection.getInputStream().use { it.readBytes() }
         file.writeBytes(bytes)
-        trimRouteTileCache(directory)
+        OfflineMapStore.trimViewedCache(context)
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
     }.getOrNull()
     if (bitmap != null) RouteMapTileCache.put(key, bitmap)
     return bitmap
-}
-
-private fun trimRouteTileCache(directory: File) {
-    val files = directory.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: return
-    files.drop(180).forEach { runCatching { it.delete() } }
 }
 
 private fun tileX(longitude: Double, zoom: Int): Double = (longitude + 180.0) / 360.0 * (1 shl zoom)
