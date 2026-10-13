@@ -265,7 +265,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                     },
                     onFinish = { showFinishConfirm = true }
                 )
-                1 -> RoutePage(snapshot, TrackStore.recentTrack(context), savedBuoys, isAmbient)
+                1 -> RoutePage(snapshot, if (snapshot.active) TrackStore.recentTrack(context) else CircuitStore.points(context).ifEmpty { TrackStore.recentTrack(context) }, savedBuoys, isAmbient)
                 2 -> PulsePage(ble, isAmbient,
                     onScan = { hrManager.scan() },
                     onConnect = { hrManager.connect(it) },
@@ -515,7 +515,7 @@ private fun RoutePage(s: TrackSnapshot, points: List<GeoSample>, buoys: List<Sav
                 latitude = s.latitude,
                 longitude = s.longitude,
                 ambient = ambient,
-                followPosition = s.active && !s.paused
+                followPosition = s.latitude != null && s.longitude != null
             )
         }
         Spacer(Modifier.height(7.dp))
