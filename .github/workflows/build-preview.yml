@@ -63,6 +63,7 @@ jobs:
           name: OpenKayak v2.3 · resumen de entrenamientos
           prerelease: true
           draft: false
+          overwrite_files: true
           files: |
             dist/OpenKayak-v2.3-WearOS.apk
             dist/OpenKayak-v2.3-Android.apk
