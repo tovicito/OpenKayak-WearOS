@@ -74,6 +74,9 @@ private fun OpenKayakPhone() {
     var buoyType by remember { mutableStateOf("BUOY") }
     var weightText by remember { mutableStateOf(PhoneDataStore.weightKg(context).toString()) }
     var ageText by remember { mutableStateOf(PhoneDataStore.ageYears(context).toString()) }
+    var heightText by remember { mutableStateOf(PhoneDataStore.heightCm(context).toString()) }
+    var sexText by remember { mutableStateOf(PhoneDataStore.biologicalSex(context)) }
+    var detailWorkout by remember { mutableStateOf<PhoneWorkout?>(null) }
     var zoom by remember { mutableIntStateOf(PhoneDataStore.mapZoom(context)) }
     var accuracy by remember { mutableFloatStateOf(PhoneDataStore.gpsAccuracy(context)) }
     var routeColorHex by remember { mutableStateOf(PhoneDataStore.routeColorHex(context)) }
@@ -149,7 +152,11 @@ private fun OpenKayakPhone() {
             when (page) {
                 0 -> WorkoutsPage(
                     workouts, selectedStart,
-                    onSelect = { start -> selectedStart = start; page = 1 },
+                    onSelect = { start ->
+                        selectedStart = start
+                        detailWorkout = workouts.firstOrNull { it.startAt == start }
+                    },
+                    onShowMap = { start -> selectedStart = start; page = 1 },
                     onSync = { PhoneSyncService.requestSync(context); status = "Solicitando el historial completo del reloj…" }
                 )
                 1 -> MapAndBuoysPage(
@@ -182,22 +189,43 @@ private fun OpenKayakPhone() {
                     }
                 )
                 else -> SettingsPage(
-                    weightText, ageText, zoom, accuracy, routeColorHex,
+                    weightText, ageText, heightText, sexText, zoom, accuracy, routeColorHex,
                     onWeight = { weightText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.take(6) },
                     onAge = { ageText = it.filter(Char::isDigit).take(3) },
+                    onHeight = { heightText = it.filter(Char::isDigit).take(3) },
+                    onSex = { sexText = it },
                     onZoom = { zoom = it },
                     onAccuracy = { accuracy = it },
                     onRouteColor = { routeColorHex = it },
                     onSave = {
                         val weight = weightText.replace(',', '.').toDoubleOrNull()
                         val age = ageText.toIntOrNull()
-                        if (weight == null || age == null || weight !in 25.0..250.0 || age !in 8..100) {
-                            status = "Comprueba el peso (25–250 kg) y la edad (8–100)."
+                        val height = heightText.toIntOrNull()
+                        if (weight == null || age == null || height == null ||
+                            weight !in 25.0..250.0 || age !in 8..100 || height !in 80..230) {
+                            status = "Comprueba peso (25–250 kg), edad (8–100) y altura (80–230 cm)."
                         } else {
-                            PhoneDataStore.saveSettings(context, weight, age, zoom, accuracy, routeColorHex)
+                            PhoneDataStore.saveSettings(context, weight, age, height, sexText, zoom, accuracy, routeColorHex)
                             PhoneSyncService.publishSettings(context, weight, age, zoom, accuracy, routeColorHex)
-                            status = "Ajustes guardados y enviados al reloj."
+                            status = "Perfil guardado en el móvil; peso y edad enviados al reloj."
                         }
+                    }
+                )
+            }
+            detailWorkout?.let { workout ->
+                WorkoutDetailDialog(
+                    workout = workout,
+                    weightKg = PhoneDataStore.weightKg(context),
+                    heightCm = PhoneDataStore.heightCm(context),
+                    ageYears = PhoneDataStore.ageYears(context),
+                    biologicalSex = PhoneDataStore.biologicalSex(context),
+                    onDismiss = { detailWorkout = null },
+                    onDelete = {
+                        PhoneDataStore.deleteWorkout(context, workout.startAt)
+                        workouts = PhoneDataStore.allWorkouts(context)
+                        selectedStart = null
+                        detailWorkout = null
+                        status = "Entrenamiento borrado del historial del móvil. El reloj no se ha modificado."
                     }
                 )
             }
@@ -208,7 +236,7 @@ private fun OpenKayakPhone() {
 @Composable
 private fun WorkoutsPage(
     workouts: List<PhoneWorkout>, selectedStart: Long?,
-    onSelect: (Long) -> Unit, onSync: () -> Unit
+    onSelect: (Long) -> Unit, onShowMap: (Long) -> Unit, onSync: () -> Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
@@ -238,8 +266,13 @@ private fun WorkoutsPage(
                         Text(duration(workout.elapsedMs) + " · " + workout.strokes + " paladas · " +
                             if (workout.averageBpm > 0) workout.averageBpm.toString() + " lpm" else "sin FC",
                             color = Color.White, fontSize = 12.sp)
-                        Text(if (workout.gpxPath.isNotBlank()) "GPX recibido · toca para ver el mapa" else "Sin archivo GPX recibido",
-                            color = Muted, fontSize = 10.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(if (workout.gpxPath.isNotBlank()) "GPX recibido" else "Sin archivo GPX",
+                                color = Muted, fontSize = 10.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { onShowMap(workout.startAt) }, enabled = workout.gpxPath.isNotBlank()) {
+                                Text("Ver mapa")
+                            }
+                        }
                     }
                 }
             }
@@ -311,19 +344,31 @@ private fun MapAndBuoysPage(
 
 @Composable
 private fun SettingsPage(
-    weightText: String, ageText: String, zoom: Int, accuracy: Float, routeColorHex: String,
-    onWeight: (String) -> Unit, onAge: (String) -> Unit, onZoom: (Int) -> Unit,
+    weightText: String, ageText: String, heightText: String, sexText: String,
+    zoom: Int, accuracy: Float, routeColorHex: String,
+    onWeight: (String) -> Unit, onAge: (String) -> Unit, onHeight: (String) -> Unit,
+    onSex: (String) -> Unit, onZoom: (Int) -> Unit,
     onAccuracy: (Float) -> Unit, onRouteColor: (String) -> Unit, onSave: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(bottom = 16.dp)) {
-        Text("AJUSTES DEL RELOJ", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Text("Se aplican por Wear OS Data Layer cuando el reloj recibe la actualización.", color = Muted, fontSize = 12.sp)
+        Text("PERFIL Y AJUSTES", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text("Peso y edad se envían al reloj; altura y sexo quedan guardados en el perfil del móvil.", color = Muted, fontSize = 12.sp)
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(value = weightText, onValueChange = onWeight, label = { Text("Peso del perfil (kg)") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(value = ageText, onValueChange = onAge, label = { Text("Edad del perfil") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(value = heightText, onValueChange = onHeight, label = { Text("Altura (cm)") },
+            singleLine = true, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(10.dp))
+        Text("Sexo para el perfil (opcional)", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            FilterChip(selected = sexText == "FEMALE", onClick = { onSex("FEMALE") }, label = { Text("Mujer") })
+            FilterChip(selected = sexText == "MALE", onClick = { onSex("MALE") }, label = { Text("Hombre") })
+            FilterChip(selected = sexText == "UNSPECIFIED", onClick = { onSex("UNSPECIFIED") }, label = { Text("No indicar") })
+        }
         Spacer(Modifier.height(14.dp))
         Text("Color del circuito", color = Color.White, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
