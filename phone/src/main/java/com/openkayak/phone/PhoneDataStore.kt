@@ -4,12 +4,16 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.time.Instant
 
 data class LatLon(val latitude: Double, val longitude: Double)
+data class PhoneTrackPoint(val timeMs: Long, val latitude: Double, val longitude: Double)
+data class PhoneMetricSample(val timeMs: Long, val value: Double)
 data class PhoneWorkout(
     val startAt: Long, val endAt: Long, val elapsedMs: Long, val distanceM: Double,
     val strokes: Int, val averageBpm: Int, val maxBpm: Int, val minBpm: Int,
-    val calories: Int, val gpxPath: String
+    val calories: Int, val gpxPath: String,
+    val heartRateSamples: List<PhoneMetricSample> = emptyList()
 )
 data class PhoneBuoy(val id: Long, val latitude: Double, val longitude: Double, val type: String)
 
@@ -26,21 +30,47 @@ object PhoneDataStore {
         val data = JSONArray(prefs(context).getString("workouts", "[]"))
         (0 until data.length()).mapNotNull { index ->
             val o = data.optJSONObject(index) ?: return@mapNotNull null
+            val samplesJson = o.optJSONArray("heartRateSamples") ?: JSONArray()
+            val samples = (0 until samplesJson.length()).mapNotNull { sampleIndex ->
+                val sample = samplesJson.optJSONObject(sampleIndex) ?: return@mapNotNull null
+                val time = sample.optLong("timeMs", 0L)
+                val value = sample.optDouble("value", Double.NaN)
+                if (time > 0L && value.isFinite() && value in 25.0..240.0) PhoneMetricSample(time, value) else null
+            }
             PhoneWorkout(o.optLong("startAt"), o.optLong("endAt"), o.optLong("elapsedMs"),
                 o.optDouble("distanceM"), o.optInt("strokes"), o.optInt("averageBpm"), o.optInt("maxBpm"),
-                o.optInt("minBpm"), o.optInt("calories"), o.optString("gpxPath"))
+                o.optInt("minBpm"), o.optInt("calories"), o.optString("gpxPath"), samples)
         }.sortedByDescending { it.endAt }
     }.getOrDefault(emptyList())
 
     fun recordWorkout(context: Context, workout: PhoneWorkout) {
-        val json = JSONArray()
-        (allWorkouts(context).filterNot { it.startAt == workout.startAt } + workout)
-            .sortedByDescending { it.endAt }.forEach { s ->
-                json.put(JSONObject().put("startAt", s.startAt).put("endAt", s.endAt)
-                    .put("elapsedMs", s.elapsedMs).put("distanceM", s.distanceM).put("strokes", s.strokes)
-                    .put("averageBpm", s.averageBpm).put("maxBpm", s.maxBpm).put("minBpm", s.minBpm)
-                    .put("calories", s.calories).put("gpxPath", s.gpxPath))
+        saveWorkouts(context, allWorkouts(context).filterNot { it.startAt == workout.startAt } + workout)
+    }
+
+    fun deleteWorkout(context: Context, startAt: Long) {
+        val old = allWorkouts(context).firstOrNull { it.startAt == startAt }
+        old?.gpxPath?.takeIf { it.isNotBlank() }?.let { path ->
+            runCatching {
+                val file = File(path)
+                val received = File(context.filesDir, "received").canonicalPath + File.separator
+                if (file.isFile && file.canonicalPath.startsWith(received)) file.delete()
             }
+        }
+        saveWorkouts(context, allWorkouts(context).filterNot { it.startAt == startAt })
+    }
+
+    private fun saveWorkouts(context: Context, workouts: List<PhoneWorkout>) {
+        val json = JSONArray()
+        workouts.distinctBy { it.startAt }.sortedByDescending { it.endAt }.forEach { s ->
+            val samples = JSONArray()
+            s.heartRateSamples.forEach { sample ->
+                samples.put(JSONObject().put("timeMs", sample.timeMs).put("value", sample.value))
+            }
+            json.put(JSONObject().put("startAt", s.startAt).put("endAt", s.endAt)
+                .put("elapsedMs", s.elapsedMs).put("distanceM", s.distanceM).put("strokes", s.strokes)
+                .put("averageBpm", s.averageBpm).put("maxBpm", s.maxBpm).put("minBpm", s.minBpm)
+                .put("calories", s.calories).put("gpxPath", s.gpxPath).put("heartRateSamples", samples))
+        }
         prefs(context).edit().putString("workouts", json.toString()).apply()
     }
 
@@ -76,6 +106,27 @@ object PhoneDataStore {
         prefs(context).edit().remove("circuit_path").remove("circuit_label").apply()
     }
 
+    fun trackPoints(path: String?): List<PhoneTrackPoint> {
+        if (path.isNullOrBlank()) return emptyList()
+        val file = File(path)
+        if (!file.isFile) return emptyList()
+        val pointRegex = Regex("""<trkpt\b([^>]*)>(.*?)</trkpt>""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val latRegex = Regex("""\blat="([^"]+)"""")
+        val lonRegex = Regex("""\blon="([^"]+)"""")
+        val timeRegex = Regex("""<time>\s*([^<]+)\s*</time>""")
+        return runCatching {
+            pointRegex.findAll(file.readText()).mapNotNull { match ->
+                val attrs = match.groupValues[1]
+                val body = match.groupValues[2]
+                val lat = latRegex.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: return@mapNotNull null
+                val lon = lonRegex.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: return@mapNotNull null
+                val timeText = timeRegex.find(body)?.groupValues?.get(1) ?: return@mapNotNull null
+                val time = runCatching { Instant.parse(timeText) .toEpochMilli() }.getOrNull() ?: return@mapNotNull null
+                if (lat in -90.0..90.0 && lon in -180.0..180.0) PhoneTrackPoint(time, lat, lon) else null
+            }.sortedBy { it.timeMs }.toList()
+        }.getOrDefault(emptyList())
+    }
+
     fun routePoints(path: String?): List<LatLon> {
         if (path.isNullOrBlank()) return emptyList()
         val file = File(path)
@@ -90,9 +141,14 @@ object PhoneDataStore {
         }.getOrDefault(emptyList())
     }
 
-    fun saveSettings(context: Context, weightKg: Double, ageYears: Int, mapZoom: Int, gpsAccuracy: Float, routeColorHex: String) {
+    fun saveSettings(
+        context: Context, weightKg: Double, ageYears: Int, heightCm: Int, biologicalSex: String,
+        mapZoom: Int, gpsAccuracy: Float, routeColorHex: String
+    ) {
         val safeRouteColor = routeColorHex.takeIf { it in routeColorPalette } ?: ROUTE_COLOR_ORANGE
+        val safeSex = biologicalSex.takeIf { it in setOf("FEMALE", "MALE", "UNSPECIFIED") } ?: "UNSPECIFIED"
         prefs(context).edit().putFloat("weight_kg", weightKg.toFloat()).putInt("age_years", ageYears)
+            .putInt("height_cm", heightCm.coerceIn(80, 230)).putString("biological_sex", safeSex)
             .putInt("map_zoom", mapZoom.coerceIn(14, 17)).putFloat("gps_accuracy", gpsAccuracy.coerceIn(10f, 65f))
             .putString("route_color_hex", safeRouteColor).apply()
     }
@@ -102,6 +158,8 @@ object PhoneDataStore {
 
     fun weightKg(context: Context) = prefs(context).getFloat("weight_kg", 70f).toDouble()
     fun ageYears(context: Context) = prefs(context).getInt("age_years", 30)
+    fun heightCm(context: Context) = prefs(context).getInt("height_cm", 170).coerceIn(80, 230)
+    fun biologicalSex(context: Context) = prefs(context).getString("biological_sex", "UNSPECIFIED") ?: "UNSPECIFIED"
     fun mapZoom(context: Context) = prefs(context).getInt("map_zoom", 16).coerceIn(14, 17)
     fun gpsAccuracy(context: Context) = prefs(context).getFloat("gps_accuracy", 35f).coerceIn(10f, 65f)
 }
