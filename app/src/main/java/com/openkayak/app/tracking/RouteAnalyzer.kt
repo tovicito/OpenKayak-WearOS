@@ -44,22 +44,26 @@ object RouteAnalyzer {
     private const val MIN_REPEAT_INTERVAL_MS = 40_000L
 
     private val pointRegex = Regex(
-        """<trkpt\b[^>]*\blat="([^"]+)"[^>]*\blon="([^"]+)"[^>]*>.*?<time>([^<]+)</time>.*?</trkpt>""",
+        """<(trkpt|rtept|wpt)\\b[^>]*\\blat="([^"]+)"[^>]*\\blon="([^"]+)"[^>]*>(.*?)</\\1>""",
         setOf(RegexOption.DOT_MATCHES_ALL)
     )
+    private val timeRegex = Regex("""<time>\\s*([^<]+)\\s*</time>""")
 
     fun analyze(file: File?): RouteAnalysis {
         if (file == null || !file.isFile) return RouteAnalysis(emptyList(), emptyList(), 0, false)
         val timed = runCatching {
+            var syntheticTime = 1_000L
             pointRegex.findAll(file.readText()).mapNotNull { match ->
-                val lat = match.groupValues[1].toDoubleOrNull() ?: return@mapNotNull null
-                val lon = match.groupValues[2].toDoubleOrNull() ?: return@mapNotNull null
-                val timestamp = runCatching { Instant.parse(match.groupValues[3]).toEpochMilli() }.getOrDefault(0L)
-                if (lat !in -90.0..90.0 || lon !in -180.0..180.0 || timestamp <= 0L) null
-                else TimedPoint(GeoSample(lat, lon), timestamp)
+                val lat = match.groupValues[2].toDoubleOrNull() ?: return@mapNotNull null
+                val lon = match.groupValues[3].toDoubleOrNull() ?: return@mapNotNull null
+                if (lat !in -90.0..90.0 || lon !in -180.0..180.0) return@mapNotNull null
+                val rawTime = timeRegex.find(match.groupValues[4])?.groupValues?.get(1)
+                val parsedTime = rawTime?.let { runCatching { Instant.parse(it.trim()).toEpochMilli() }.getOrNull() }
+                val timestamp = parsedTime?.takeIf { it > 0L } ?: syntheticTime
+                syntheticTime = maxOf(syntheticTime + 5_000L, timestamp + 1L)
+                TimedPoint(GeoSample(lat, lon), timestamp)
             }.toList()
         }.getOrDefault(emptyList())
-
         val cleaned = ArrayList<TimedPoint>(timed.size)
         timed.forEach { next ->
             val previous = cleaned.lastOrNull()
