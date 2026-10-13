@@ -52,7 +52,7 @@ object WearSyncBridge {
             map.putDouble("distanceM", distanceM); map.putInt("strokes", strokes)
             map.putInt("averageBpm", averageBpm); map.putInt("maxBpm", maxBpm); map.putInt("minBpm", minBpm)
             map.putInt("calories", calories)
-            map.putString("hrSamples", s.hrSamples)
+            map.putString("hrSamples", SessionHistoryStore.all(context).firstOrNull { it.startAt == startAt }?.hrSamples.orEmpty())
             // Force a fresh Data Layer event when the user manually retries unchanged workouts.
             map.putLong("syncRevision", System.currentTimeMillis())
             val file = File(trackPath)
