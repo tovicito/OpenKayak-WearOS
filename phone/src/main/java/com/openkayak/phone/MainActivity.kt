@@ -212,7 +212,8 @@ private fun OpenKayakPhone() {
                     }
                 )
             }
-
+        }
+    }
     detailWorkout?.let { workout -> WorkoutDetailDialog(workout, { detailWorkout = null }, { deleteCandidate = workout; detailWorkout = null }) }
     deleteCandidate?.let { workout ->
         AlertDialog(onDismissRequest = { deleteCandidate = null }, title = { Text("Borrar entrenamiento") },
