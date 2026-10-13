@@ -111,8 +111,8 @@ object PhoneDataStore {
         val file = File(path)
         if (!file.isFile) return emptyList()
         val pointRegex = Regex("""<trkpt\b([^>]*)>(.*?)</trkpt>""", setOf(RegexOption.DOT_MATCHES_ALL))
-        val latRegex = Regex("""\blat="([^"]+)"""")
-        val lonRegex = Regex("""\blon="([^"]+)"""")
+        val latRegex = Regex("""\blat="([^"]+)""")
+        val lonRegex = Regex("""\blon="([^"]+)""")
         val timeRegex = Regex("""<time>\s*([^<]+)\s*</time>""")
         return runCatching {
             pointRegex.findAll(file.readText()).mapNotNull { match ->
