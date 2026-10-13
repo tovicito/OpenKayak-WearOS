@@ -23,7 +23,7 @@ class WearSyncService : WearableListenerService() {
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         if (messageEvent.path == "/openkayak/request-sync") {
-            io.execute { WearSyncBridge.publishAll(applicationContext) }
+            WearSyncBridge.publishAll(applicationContext)
         }
     }
 
@@ -65,13 +65,16 @@ class WearSyncService : WearableListenerService() {
                     this, data.getString("routeColorHex") ?: AppSettingsStore.routeColorHex(this)
                 )
             }
-            path == "/openkayak/import/circuit/delete" -> CircuitStore.clear(this)
+            path == "/openkayak/import/circuit/delete" -> {
+                CircuitStore.clear(this)
+                WearSyncBridge.publishCircuitDeleted(this)
+            }
             path.startsWith("/openkayak/import/circuit/") -> {
                 val asset = data.getAsset("gpx") ?: return
                 val source = readAsset(asset) ?: return
-                CircuitStore.importFile(this, source, data.getString("label") ?: "Circuito importado")
+                val imported = CircuitStore.importFile(this, source, data.getString("label") ?: "Circuito importado")
                 source.delete()
-                WearSyncBridge.publishCircuit(this)
+                if (imported) WearSyncBridge.publishCircuit(this)
             }
         }
     }

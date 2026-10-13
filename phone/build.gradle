@@ -11,8 +11,8 @@ android {
         applicationId 'com.openkayak.app'
         minSdk 26
         targetSdk 35
-        versionCode 20101
-        versionName '2.1.color'
+        versionCode 20202
+        versionName '2.2.2-sync-repair'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

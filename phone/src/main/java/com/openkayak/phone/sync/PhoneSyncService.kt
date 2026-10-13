@@ -1,5 +1,6 @@
 package com.openkayak.phone.sync
 
+import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataEvent
@@ -36,10 +37,11 @@ class PhoneSyncService : WearableListenerService() {
             path.startsWith("/openkayak/workouts/") -> {
                 val startAt = data.getLong("startAt", 0L)
                 if (startAt <= 0L) return
-                var gpxPath = ""
-                data.getAsset("gpx")?.let { asset ->
-                    gpxPath = copyAsset(asset, "piraguismo-$startAt.gpx")?.absolutePath.orEmpty()
-                }
+                val previous = PhoneDataStore.allWorkouts(this).firstOrNull { it.startAt == startAt }
+                val incomingGpx = data.getAsset("gpx")?.let { asset ->
+                    copyAsset(asset, "piraguismo-$startAt.gpx")?.absolutePath.orEmpty()
+                }.orEmpty()
+                val gpxPath = incomingGpx.ifBlank { previous?.gpxPath.orEmpty() }
                 PhoneDataStore.recordWorkout(this, PhoneWorkout(
                     startAt, data.getLong("endAt", startAt), data.getLong("elapsedMs", 0L),
                     data.getDouble("distanceM", 0.0), data.getInt("strokes", 0),
@@ -60,6 +62,7 @@ class PhoneSyncService : WearableListenerService() {
                 PhoneDataStore.replaceBuoys(this, buoys)
             }
             path == "/openkayak/circuit/current" -> {
+                if (data.getBoolean("deleted", false)) { PhoneDataStore.clearCircuit(this); return }
                 val asset = data.getAsset("gpx") ?: return
                 val file = copyAsset(asset, "circuito-reloj-" + System.currentTimeMillis() + ".gpx") ?: return
                 PhoneDataStore.saveCircuit(this, file, data.getString("label") ?: "Circuito del reloj")
@@ -73,7 +76,7 @@ class PhoneSyncService : WearableListenerService() {
         val output = File(folder, filename)
         response.inputStream.use { input -> output.outputStream().use { out -> input.copyTo(out) } }
         output.takeIf { it.isFile && it.length() > 0L }
-    }.getOrNull()
+    }.onFailure { Log.e("OpenKayakSync", "No se pudo copiar el asset recibido: $filename", it) }.getOrNull()
 
     companion object {
         private val io: ExecutorService = Executors.newSingleThreadExecutor()
@@ -85,7 +88,8 @@ class PhoneSyncService : WearableListenerService() {
                     nodes.forEach { node ->
                         Tasks.await(Wearable.getMessageClient(app).sendMessage(node.id, "/openkayak/request-sync", byteArrayOf()))
                     }
-                }
+                    Log.d("OpenKayakSync", "Solicitud enviada a ${nodes.size} reloj(es)")
+                }.onFailure { Log.e("OpenKayakSync", "No se pudo solicitar la sincronización", it) }
             }
         }
         fun publishBuoys(context: android.content.Context) {
@@ -94,7 +98,10 @@ class PhoneSyncService : WearableListenerService() {
             }
             val request = PutDataMapRequest.create("/openkayak/import/buoys")
             request.dataMap.putString("items", encoded)
-            io.execute { runCatching { Tasks.await(Wearable.getDataClient(context).putDataItem(request.asPutDataRequest().setUrgent())) } }
+            request.dataMap.putLong("syncRevision", System.currentTimeMillis())
+            val app = context.applicationContext
+            io.execute { runCatching { Tasks.await(Wearable.getDataClient(app).putDataItem(request.asPutDataRequest().setUrgent())) }
+                .onFailure { Log.e("OpenKayakSync", "No se pudieron enviar las boyas al reloj", it) } }
         }
         fun publishSettings(
             context: android.content.Context, weightKg: Double, ageYears: Int,
@@ -106,22 +113,32 @@ class PhoneSyncService : WearableListenerService() {
             request.dataMap.putInt("mapZoom", mapZoom)
             request.dataMap.putFloat("gpsAccuracyLimitM", gpsAccuracy)
             request.dataMap.putString("routeColorHex", routeColorHex)
-            io.execute { runCatching { Tasks.await(Wearable.getDataClient(context).putDataItem(request.asPutDataRequest().setUrgent())) } }
+            request.dataMap.putLong("updatedAt", System.currentTimeMillis())
+            val app = context.applicationContext
+            io.execute { runCatching { Tasks.await(Wearable.getDataClient(app).putDataItem(request.asPutDataRequest().setUrgent())) }
+                .onFailure { Log.e("OpenKayakSync", "No se pudieron enviar los ajustes al reloj", it) } }
         }
         fun importCircuit(context: android.content.Context, file: File, label: String) {
+            val app = context.applicationContext
             io.execute {
                 runCatching {
+                    require(file.isFile && file.length() > 0L) { "El GPX está vacío o no existe" }
                     val request = PutDataMapRequest.create("/openkayak/import/circuit/" + System.currentTimeMillis())
                     request.dataMap.putString("label", label)
                     request.dataMap.putAsset("gpx", Asset.createFromBytes(file.readBytes()))
-                    Tasks.await(Wearable.getDataClient(context).putDataItem(request.asPutDataRequest().setUrgent()))
-                }
+                    request.dataMap.putLong("updatedAt", System.currentTimeMillis())
+                    Tasks.await(Wearable.getDataClient(app).putDataItem(request.asPutDataRequest().setUrgent()))
+                    Log.d("OpenKayakSync", "Circuito enviado al reloj: $label")
+                }.onFailure { Log.e("OpenKayakSync", "No se pudo enviar el circuito al reloj", it) }
             }
         }
         fun deleteCircuitFromWatch(context: android.content.Context) {
+            val app = context.applicationContext
             val request = PutDataMapRequest.create("/openkayak/import/circuit/delete")
             request.dataMap.putBoolean("delete", true)
-            io.execute { runCatching { Tasks.await(Wearable.getDataClient(context).putDataItem(request.asPutDataRequest().setUrgent())) } }
+            request.dataMap.putLong("updatedAt", System.currentTimeMillis())
+            io.execute { runCatching { Tasks.await(Wearable.getDataClient(app).putDataItem(request.asPutDataRequest().setUrgent())) }
+                .onFailure { Log.e("OpenKayakSync", "No se pudo borrar el circuito del reloj", it) } }
         }
     }
 }
