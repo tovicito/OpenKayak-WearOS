@@ -12,6 +12,7 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import com.openkayak.phone.PhoneBuoy
 import com.openkayak.phone.PhoneDataStore
+import com.openkayak.phone.PhoneMetricSample
 import com.openkayak.phone.PhoneWorkout
 import java.io.File
 import java.util.concurrent.ExecutorService
@@ -40,11 +41,20 @@ class PhoneSyncService : WearableListenerService() {
                 data.getAsset("gpx")?.let { asset ->
                     gpxPath = copyAsset(asset, "piraguismo-$startAt.gpx")?.absolutePath.orEmpty()
                 }
+                val rawHeartRateSamples = data.getString("heartRateSamples")
+                    ?: data.getString("hrSamples").orEmpty()
+                val heartRateSamples = rawHeartRateSamples.split(';').mapNotNull { row ->
+                    val fields = row.split(',')
+                    if (fields.size != 2) return@mapNotNull null
+                    val timeMs = fields[0].toLongOrNull() ?: return@mapNotNull null
+                    val bpm = fields[1].toDoubleOrNull() ?: return@mapNotNull null
+                    if (timeMs <= 0L || bpm !in 25.0..240.0) null else PhoneMetricSample(timeMs, bpm)
+                }
                 PhoneDataStore.recordWorkout(this, PhoneWorkout(
                     startAt, data.getLong("endAt", startAt), data.getLong("elapsedMs", 0L),
                     data.getDouble("distanceM", 0.0), data.getInt("strokes", 0),
                     data.getInt("averageBpm", 0), data.getInt("maxBpm", 0), data.getInt("minBpm", 0),
-                    data.getInt("calories", 0), gpxPath
+                    data.getInt("calories", 0), gpxPath, heartRateSamples
                 ))
             }
             path == "/openkayak/buoys/current" -> {
