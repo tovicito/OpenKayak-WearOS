@@ -7,7 +7,13 @@ import java.io.File
 import java.time.Instant
 
 data class LatLon(val latitude: Double, val longitude: Double)
-data class PhoneTrackPoint(val timeMs: Long, val latitude: Double, val longitude: Double)
+data class PhoneTrackPoint(
+    val timeMs: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val elevationM: Double? = null,
+    val heartRateBpm: Int? = null
+)
 data class PhoneMetricSample(val timeMs: Long, val value: Double)
 data class PhoneWorkout(
     val startAt: Long, val endAt: Long, val elapsedMs: Long, val distanceM: Double,
@@ -28,8 +34,10 @@ object PhoneDataStore {
 
     fun allWorkouts(context: Context): List<PhoneWorkout> = runCatching {
         val data = JSONArray(prefs(context).getString("workouts", "[]"))
+        val deleted = deletedWorkoutStarts(context)
         (0 until data.length()).mapNotNull { index ->
             val o = data.optJSONObject(index) ?: return@mapNotNull null
+            if (o.optLong("startAt") in deleted) return@mapNotNull null
             val samplesJson = o.optJSONArray("heartRateSamples") ?: JSONArray()
             val samples = (0 until samplesJson.length()).mapNotNull { sampleIndex ->
                 val sample = samplesJson.optJSONObject(sampleIndex) ?: return@mapNotNull null
@@ -44,10 +52,25 @@ object PhoneDataStore {
     }.getOrDefault(emptyList())
 
     fun recordWorkout(context: Context, workout: PhoneWorkout) {
+        if (isWorkoutDeleted(context, workout.startAt)) return
         saveWorkouts(context, allWorkouts(context).filterNot { it.startAt == workout.startAt } + workout)
     }
 
+    fun isWorkoutDeleted(context: Context, startAt: Long): Boolean =
+        startAt > 0L && startAt in deletedWorkoutStarts(context)
+
+    private fun deletedWorkoutStarts(context: Context): Set<Long> = runCatching {
+        val data = JSONArray(prefs(context).getString("deleted_workout_starts", "[]"))
+        (0 until data.length()).mapNotNull { index -> data.optLong(index).takeIf { it > 0L } }.toSet()
+    }.getOrDefault(emptySet())
+
     fun deleteWorkout(context: Context, startAt: Long) {
+        if (startAt <= 0L) return
+        val deleted = deletedWorkoutStarts(context).toMutableSet().apply { add(startAt) }
+        val keep = deleted.sortedDescending().take(5000).toMutableSet().apply { add(startAt) }
+        val tombstones = JSONArray()
+        keep.forEach { tombstones.put(it) }
+        prefs(context).edit().putString("deleted_workout_starts", tombstones.toString()).apply()
         val old = allWorkouts(context).firstOrNull { it.startAt == startAt }
         old?.gpxPath?.takeIf { it.isNotBlank() }?.let { path ->
             runCatching {
@@ -121,8 +144,14 @@ object PhoneDataStore {
                 val lat = latRegex.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: return@mapNotNull null
                 val lon = lonRegex.find(attrs)?.groupValues?.get(1)?.toDoubleOrNull() ?: return@mapNotNull null
                 val timeText = timeRegex.find(body)?.groupValues?.get(1) ?: return@mapNotNull null
-                val time = runCatching { Instant.parse(timeText) .toEpochMilli() }.getOrNull() ?: return@mapNotNull null
-                if (lat in -90.0..90.0 && lon in -180.0..180.0) PhoneTrackPoint(time, lat, lon) else null
+                val time = runCatching { Instant.parse(timeText).toEpochMilli() }.getOrNull() ?: return@mapNotNull null
+                val elevation = Regex("""<ele>\s*([^<]+)\s*</ele>""", RegexOption.IGNORE_CASE)
+                    .find(body)?.groupValues?.get(1)?.trim()?.toDoubleOrNull()?.takeIf { it.isFinite() && it in -500.0..9000.0 }
+                val hr = Regex("""<(?:[A-Za-z0-9_.-]+:)?(?:hr|heartrate|heart_rate)\b[^>]*>\s*([^<]+)\s*</(?:[A-Za-z0-9_.-]+:)?(?:hr|heartrate|heart_rate)\s*>""",
+                    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                    .find(body)?.groupValues?.get(1)?.trim()?.toIntOrNull()?.takeIf { it in 25..240 }
+                if (lat in -90.0..90.0 && lon in -180.0..180.0)
+                    PhoneTrackPoint(time, lat, lon, elevation, hr) else null
             }.sortedBy { it.timeMs }.toList()
         }.getOrDefault(emptyList())
     }
