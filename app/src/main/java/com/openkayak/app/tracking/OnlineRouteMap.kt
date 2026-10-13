@@ -82,11 +82,13 @@ fun OnlineRouteMap(
             (points.minOf { it.longitude } + points.maxOf { it.longitude }) / 2.0
         )
     }
+    // Prefer the device's current fix as the initial map center. A saved route must
+    // not pull the live map away from the paddler's actual position.
     var centerLat by remember(routeKey, followPosition) {
-        mutableDoubleStateOf(if (!followPosition && boundsCenter != null) boundsCenter.latitude else latitude ?: boundsCenter?.latitude ?: 43.55)
+        mutableDoubleStateOf(latitude ?: boundsCenter?.latitude ?: 43.55)
     }
     var centerLon by remember(routeKey, followPosition) {
-        mutableDoubleStateOf(if (!followPosition && boundsCenter != null) boundsCenter.longitude else longitude ?: boundsCenter?.longitude ?: -5.92)
+        mutableDoubleStateOf(longitude ?: boundsCenter?.longitude ?: -5.92)
     }
     var zoom by remember { mutableIntStateOf(AppSettingsStore.mapZoom(context)) }
     var userPanned by remember(routeKey) { mutableStateOf(false) }
@@ -179,11 +181,19 @@ fun OnlineRouteMap(
         if (!ambient) {
             Row(Modifier.align(Alignment.TopEnd).background(Color(0xDD101820), RoundedCornerShape(12.dp))) {
                 Text("−", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable { zoom = (zoom - 1).coerceIn(14, 17); userPanned = true }
-                        .padding(horizontal = 10.dp, vertical = 3.dp))
+                    modifier = Modifier.clickable { zoom = (zoom - 1).coerceIn(14, 17) }
+                        .padding(horizontal = 8.dp, vertical = 3.dp))
+                Text("⌖", color = Color(0xFF76F4D0), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable {
+                        if (latitude != null && longitude != null) {
+                            centerLat = latitude
+                            centerLon = longitude
+                            userPanned = false
+                        }
+                    }.padding(horizontal = 7.dp, vertical = 3.dp))
                 Text("+", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clickable { zoom = (zoom + 1).coerceIn(14, 17); userPanned = true }
-                        .padding(horizontal = 10.dp, vertical = 3.dp))
+                    modifier = Modifier.clickable { zoom = (zoom + 1).coerceIn(14, 17) }
+                        .padding(horizontal = 8.dp, vertical = 3.dp))
             }
         }
     }
