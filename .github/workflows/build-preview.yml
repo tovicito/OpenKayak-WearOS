@@ -1,4 +1,4 @@
-name: OpenKayak v2.2.1 · sync, map and color fixes
+name: OpenKayak v2.2.2 · reliable workout and circuit sync
 
 on:
   push:
@@ -43,14 +43,14 @@ jobs:
       - name: Name installable APKs
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.2.1-syncfix-WearOS.apk
-          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.2.1-syncfix-Android.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.2.2-syncfix-WearOS.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.2.2-syncfix-Android.apk
           sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openkayak-v2.2.1-syncfix-apks
+          name: openkayak-v2.2.2-syncfix-apks
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -59,9 +59,9 @@ jobs:
         if: success() && (github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026' || github.ref == 'refs/heads/main')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.2.1-syncfix
+          tag_name: v2.2.2-syncfix
           target_commitish: ${{ github.sha }}
-          name: OpenKayak v2.2.1 · correcciones de sincronización, mapa y colores
+          name: OpenKayak v2.2.2 · sincronización fiable de entrenos y circuitos
           prerelease: true
           draft: false
           files: |
@@ -70,10 +70,10 @@ jobs:
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
           body: |
-            OpenKayak v2.2.1 · correcciones de sincronización, mapa y colores. Ambos APK son builds debug para pruebas.
+            OpenKayak v2.2.2 · correcciones de sincronización de entrenamientos y circuitos. Ambos APK son builds debug para pruebas.
             - OpenKayak-v2.2.1-syncfix-WearOS.apk: app para Wear OS. El código del reloj no se ha modificado en esta actualización.
             - OpenKayak-v2.2.1-syncfix-Android.apk: app móvil con correcciones de sincronización, mapa y colores, gráficas de FC y velocidad, tabla de intervalos de 10 segundos, perfil de altura/peso/edad y borrado local de sesiones.
             - SHA256SUMS.txt: hashes SHA-256 para verificar las descargas.
-            La sincronización de entrenos espera la confirmación del Data Layer y envía muestras de FC en intervalos de 10 segundos. Los colores se guardan al seleccionarlos y se reenvían al sincronizar; las eliminaciones de circuitos se propagan entre móvil y reloj. Ambos APK son builds debug para pruebas.
+            El móvil reintenta la petición de historial si el reloj todavía no está conectado. Las boyas añadidas o eliminadas en el reloj se vuelven a publicar para sincronizarlas con el móvil. Ambos APK son builds debug para pruebas.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
