@@ -11,6 +11,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -350,7 +352,7 @@ private fun SettingsPage(
     onSex: (String) -> Unit, onZoom: (Int) -> Unit,
     onAccuracy: (Float) -> Unit, onRouteColor: (String) -> Unit, onSave: () -> Unit
 ) {
-    Column(Modifier.fillMaxSize().padding(bottom = 16.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
         Text("PERFIL Y AJUSTES", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Text("Peso y edad se envían al reloj; altura y sexo quedan guardados en el perfil del móvil.", color = Muted, fontSize = 12.sp)
         Spacer(Modifier.height(16.dp))
