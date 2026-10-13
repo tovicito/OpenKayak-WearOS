@@ -64,7 +64,8 @@ object SessionReviewStore {
     }
     fun saveWorkout(context: Context, r: FinishedSession) {
         SessionHistoryStore.record(context, r.startAt, r.endAt, r.elapsedMs, r.distanceM, r.strokes, r.trackPath,
-            r.averageBpm, r.maxBpm, r.minBpm, r.calories)
+            r.averageBpm, r.maxBpm, r.minBpm, r.calories,
+            TrackStore.heartRateSamples(context).filter { it.timeMs in r.startAt..r.endAt }.joinToString(";") { it.timeMs.toString() + "," + it.bpm })
         com.openkayak.app.sync.WearSyncBridge.publishWorkout(context, r.startAt)
     }
     fun saveCircuit(context: Context, r: FinishedSession) {

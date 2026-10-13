@@ -12,7 +12,8 @@ data class SessionSummary(
     val averageBpm: Int = 0,
     val maxBpm: Int = 0,
     val minBpm: Int = 0,
-    val calories: Int = 0
+    val calories: Int = 0,
+    val hrSamples: String = ""
 )
 
 object SessionHistoryStore {
@@ -36,13 +37,13 @@ object SessionHistoryStore {
         distanceM: Double,
         strokes: Int,
         trackPath: String?,
-        averageBpm: Int = 0, maxBpm: Int = 0, minBpm: Int = 0, calories: Int = 0
+        averageBpm: Int = 0, maxBpm: Int = 0, minBpm: Int = 0, calories: Int = 0, hrSamples: String = ""
     ) {
         if (startAt <= 0L || endAt <= startAt) return
         val existing = all(context).filterNot { it.startAt == startAt }.toMutableList()
-        existing.add(SessionSummary(startAt, endAt, elapsedMs.coerceAtLeast(0L), distanceM.coerceAtLeast(0.0), strokes.coerceAtLeast(0), trackPath.orEmpty(), averageBpm, maxBpm, minBpm, calories))
+        existing.add(SessionSummary(startAt, endAt, elapsedMs.coerceAtLeast(0L), distanceM.coerceAtLeast(0.0), strokes.coerceAtLeast(0), trackPath.orEmpty(), averageBpm, maxBpm, minBpm, calories, hrSamples))
         val encoded = existing.sortedByDescending { it.endAt }.take(LIMIT).joinToString(";") {
-            listOf(it.startAt, it.endAt, it.elapsedMs, it.distanceM, it.strokes, it.averageBpm, it.maxBpm, it.minBpm, it.calories, it.trackPath).joinToString(",")
+            listOf(it.startAt, it.endAt, it.elapsedMs, it.distanceM, it.strokes, it.averageBpm, it.maxBpm, it.minBpm, it.calories, it.trackPath, it.hrSamples).joinToString(",")
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, encoded).apply()
     }
@@ -52,21 +53,21 @@ object SessionHistoryStore {
         val target = all.firstOrNull { it.startAt == startAt } ?: return false
         target.trackPath.takeIf { it.isNotBlank() }?.let { runCatching { java.io.File(it).delete() } }
         val encoded = all.filterNot { it.startAt == startAt }.joinToString(";") {
-            listOf(it.startAt, it.endAt, it.elapsedMs, it.distanceM, it.strokes, it.averageBpm, it.maxBpm, it.minBpm, it.calories, it.trackPath).joinToString(",")
+            listOf(it.startAt, it.endAt, it.elapsedMs, it.distanceM, it.strokes, it.averageBpm, it.maxBpm, it.minBpm, it.calories, it.trackPath, it.hrSamples).joinToString(",")
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, encoded).apply()
         return true
     }
 
     private fun decode(raw: String): SessionSummary? {
-        val p = raw.split(',', limit = 10)
-        if (p.size != 6 && p.size != 10) return null
+        val p = raw.split(',', limit = 11)
+        if (p.size != 6 && p.size != 10 && p.size != 11) return null
         val start = p[0].toLongOrNull() ?: return null
         val end = p[1].toLongOrNull() ?: return null
         val elapsed = p[2].toLongOrNull() ?: return null
         val distance = p[3].toDoubleOrNull() ?: return null
         val strokes = p[4].toIntOrNull() ?: return null
         return if (p.size == 6) SessionSummary(start, end, elapsed, distance, strokes, p[5])
-        else SessionSummary(start, end, elapsed, distance, strokes, p[9], p[5].toIntOrNull() ?: 0, p[6].toIntOrNull() ?: 0, p[7].toIntOrNull() ?: 0, p[8].toIntOrNull() ?: 0)
+        else SessionSummary(start, end, elapsed, distance, strokes, p[9], p[5].toIntOrNull() ?: 0, p[6].toIntOrNull() ?: 0, p[7].toIntOrNull() ?: 0, p[8].toIntOrNull() ?: 0, if (p.size == 11) p[10] else "")
     }
 }
