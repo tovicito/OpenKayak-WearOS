@@ -41,7 +41,7 @@ object PhoneDataStore {
                 json.put(JSONObject().put("startAt", s.startAt).put("endAt", s.endAt)
                     .put("elapsedMs", s.elapsedMs).put("distanceM", s.distanceM).put("strokes", s.strokes)
                     .put("averageBpm", s.averageBpm).put("maxBpm", s.maxBpm).put("minBpm", s.minBpm)
-                    .put("calories", s.calories).put("gpxPath", s.gpxPath))
+                    .put("calories", s.calories).put("gpxPath", s.gpxPath).put("hrSamples", s.hrSamples))
             }
         prefs(context).edit().putString("workouts", json.toString()).apply()
     }
@@ -89,7 +89,7 @@ object PhoneDataStore {
     fun routeTrackPoints(path: String?): List<WorkoutTrackPoint> {
         if (path.isNullOrBlank()) return emptyList()
         val file = File(path); if (!file.isFile) return emptyList()
-        val regex = Regex("""<trkpt\\b[^>]*\\blat="([^"]+)"[^>]*\\blon="([^"]+)"[^>]*>\\s*<time>([^<]+)</time>""")
+        val regex = Regex("""<trkpt\b[^>]*\blat="([^"]+)"[^>]*\blon="([^"]+)"[^>]*>\s*<time>([^<]+)</time>""")
         return runCatching {
             regex.findAll(file.readText()).mapNotNull { m ->
                 val lat = m.groupValues[1].toDoubleOrNull() ?: return@mapNotNull null
