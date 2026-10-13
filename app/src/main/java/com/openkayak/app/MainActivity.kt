@@ -276,17 +276,18 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                     buoys = savedBuoys,
                     ambient = isAmbient,
                     onSaveTurn = {
-                        if (BuoyStore.saveCurrent(context, true)) savedBuoys = BuoyStore.all(context)
+                        if (BuoyStore.saveCurrent(context, true)) { savedBuoys = BuoyStore.all(context); com.openkayak.app.sync.WearSyncBridge.publishBuoys(context) }
                         else Toast.makeText(context, "Espera a tener una posición GPS.", Toast.LENGTH_SHORT).show()
                     },
                     onSaveRoute = {
-                        if (BuoyStore.saveCurrent(context, false)) savedBuoys = BuoyStore.all(context)
+                        if (BuoyStore.saveCurrent(context, false)) { savedBuoys = BuoyStore.all(context); com.openkayak.app.sync.WearSyncBridge.publishBuoys(context) }
                         else Toast.makeText(context, "Espera a tener una posición GPS.", Toast.LENGTH_SHORT).show()
                     },
-                    onDelete = { id -> BuoyStore.remove(context, id); savedBuoys = BuoyStore.all(context) },
+                    onDelete = { id -> BuoyStore.remove(context, id); savedBuoys = BuoyStore.all(context); com.openkayak.app.sync.WearSyncBridge.publishBuoys(context) },
                     onUndo = {
                         BuoyStore.removeLast(context)
                         savedBuoys = BuoyStore.all(context)
+                        com.openkayak.app.sync.WearSyncBridge.publishBuoys(context)
                     }
                 )
                 5 -> SettingsPage(
