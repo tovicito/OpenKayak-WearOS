@@ -64,10 +64,16 @@ fun WorkoutDetailDialog(
         }
         out
     }
-    val heartSeries = remember(workout.heartRateSamples, workout.startAt) {
-        workout.heartRateSamples.mapNotNull { sample ->
+    val heartSeries = remember(workout.heartRateSamples, routePoints, workout.startAt) {
+        val syncedSamples = workout.heartRateSamples.mapNotNull { sample ->
             val seconds = (sample.timeMs - workout.startAt) / 1000.0
             if (seconds >= 0.0 && sample.value in 25.0..240.0) TimedMetric(seconds, sample.value) else null
+        }.sortedBy { it.seconds }
+        if (syncedSamples.isNotEmpty()) syncedSamples
+        else routePoints.mapNotNull { point ->
+            val bpm = point.heartRateBpm?.toDouble() ?: return@mapNotNull null
+            val seconds = (point.timeMs - workout.startAt) / 1000.0
+            if (seconds >= 0.0 && bpm in 25.0..240.0) TimedMetric(seconds, bpm) else null
         }.sortedBy { it.seconds }
     }
     val speedTenSecond = remember(speedSeries) { averageByTenSeconds(speedSeries) }
