@@ -36,7 +36,7 @@ class PhoneSyncService : WearableListenerService() {
         when {
             path.startsWith("/openkayak/workouts/") -> {
                 val startAt = data.getLong("startAt", 0L)
-                if (startAt <= 0L) return
+                if (startAt <= 0L || PhoneDataStore.isWorkoutDeleted(this, startAt)) return
                 var gpxPath = ""
                 data.getAsset("gpx")?.let { asset ->
                     gpxPath = copyAsset(asset, "piraguismo-$startAt.gpx")?.absolutePath.orEmpty()
