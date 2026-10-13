@@ -394,7 +394,7 @@ private fun SettingsPage(
         Text("Umbral de precisión GPS: ±" + accuracy.toInt() + " m", color = Color.White)
         Slider(value = accuracy, onValueChange = onAccuracy, valueRange = 10f..65f)
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Guardar ajustes en móvil y reloj") }
+        Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Guardar perfil y ajustes") }
         Spacer(Modifier.height(10.dp))
         Text("Los APK son versiones de prueba. Verifica GPS, distancia, paladas, banda BLE y sincronización en recorridos reales antes de fiarte de las métricas.",
             color = Muted, fontSize = 12.sp)
