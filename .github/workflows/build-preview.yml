@@ -1,4 +1,4 @@
-name: OpenKayak v2.2 · phone workout analytics
+name: OpenKayak v2.2.1 · sync, map and color fixes
 
 on:
   push:
@@ -43,14 +43,14 @@ jobs:
       - name: Name installable APKs
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.2.analytics-WearOS.apk
-          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.2.analytics-Android.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.2.1-syncfix-WearOS.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.2.1-syncfix-Android.apk
           sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openkayak-v2.2.analytics-apks
+          name: openkayak-v2.2.1-syncfix-apks
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -59,21 +59,21 @@ jobs:
         if: success() && (github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026' || github.ref == 'refs/heads/main')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.2.analytics
+          tag_name: v2.2.1-syncfix
           target_commitish: ${{ github.sha }}
-          name: OpenKayak v2.2 · análisis de entrenamientos en el móvil
+          name: OpenKayak v2.2.1 · correcciones de sincronización, mapa y colores
           prerelease: true
           draft: false
           files: |
-            dist/OpenKayak-v2.2.analytics-WearOS.apk
-            dist/OpenKayak-v2.2.analytics-Android.apk
+            dist/OpenKayak-v2.2.1-syncfix-WearOS.apk
+            dist/OpenKayak-v2.2.1-syncfix-Android.apk
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
           body: |
-            OpenKayak v2.2 · análisis de entrenamientos en el móvil. Ambos APK son builds debug para pruebas.
-            - OpenKayak-v2.2.analytics-WearOS.apk: app para Wear OS. El código del reloj no se ha modificado en esta actualización.
-            - OpenKayak-v2.2.analytics-Android.apk: app móvil con análisis ampliado del entrenamiento, gráficas de FC y velocidad, tabla de intervalos de 10 segundos, perfil de altura/peso/edad y borrado local de sesiones.
+            OpenKayak v2.2.1 · correcciones de sincronización, mapa y colores. Ambos APK son builds debug para pruebas.
+            - OpenKayak-v2.2.1-syncfix-WearOS.apk: app para Wear OS. El código del reloj no se ha modificado en esta actualización.
+            - OpenKayak-v2.2.1-syncfix-Android.apk: app móvil con correcciones de sincronización, mapa y colores, gráficas de FC y velocidad, tabla de intervalos de 10 segundos, perfil de altura/peso/edad y borrado local de sesiones.
             - SHA256SUMS.txt: hashes SHA-256 para verificar las descargas.
-            El análisis se abre desde el historial del móvil. El borrado afecta solo al historial local del móvil y no envía órdenes de borrado al reloj. Ambos APK son builds debug de prueba; las calorías alternativas son estimaciones y las gráficas solo muestran muestras disponibles.
+            La sincronización de entrenos espera la confirmación del Data Layer y envía muestras de FC en intervalos de 10 segundos. Los colores se guardan al seleccionarlos y se reenvían al sincronizar; las eliminaciones de circuitos se propagan entre móvil y reloj. Ambos APK son builds debug para pruebas.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

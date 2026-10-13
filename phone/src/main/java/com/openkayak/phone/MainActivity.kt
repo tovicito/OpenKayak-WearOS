@@ -125,7 +125,7 @@ private fun OpenKayakPhone() {
                 title = {
                     Column {
                         Text("OPENKAYAK", fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp)
-                        Text("V2.1 · CENTRO DE CONTROL", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
+                        Text("V2.2.1 · CENTRO DE CONTROL", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
                     }
                 },
                 actions = {
@@ -198,7 +198,15 @@ private fun OpenKayakPhone() {
                     onSex = { sexText = it },
                     onZoom = { zoom = it },
                     onAccuracy = { accuracy = it },
-                    onRouteColor = { routeColorHex = it },
+                    onRouteColor = {
+                        routeColorHex = it
+                        val savedColor = PhoneDataStore.saveRouteColor(context, it)
+                        PhoneSyncService.publishSettings(
+                            context, PhoneDataStore.weightKg(context), PhoneDataStore.ageYears(context),
+                            PhoneDataStore.mapZoom(context), PhoneDataStore.gpsAccuracy(context), savedColor
+                        )
+                        status = "Color guardado y enviado al reloj."
+                    },
                     onSave = {
                         val weight = weightText.replace(',', '.').toDoubleOrNull()
                         val age = ageText.toIntOrNull()

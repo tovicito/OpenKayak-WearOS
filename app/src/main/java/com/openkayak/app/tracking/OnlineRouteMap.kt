@@ -83,18 +83,19 @@ fun OnlineRouteMap(
         )
     }
     var centerLat by remember(routeKey, followPosition) {
-        mutableDoubleStateOf(if (!followPosition && boundsCenter != null) boundsCenter.latitude else latitude ?: boundsCenter?.latitude ?: 43.55)
+        mutableDoubleStateOf(latitude ?: boundsCenter?.latitude ?: 43.55)
     }
     var centerLon by remember(routeKey, followPosition) {
-        mutableDoubleStateOf(if (!followPosition && boundsCenter != null) boundsCenter.longitude else longitude ?: boundsCenter?.longitude ?: -5.92)
+        mutableDoubleStateOf(longitude ?: boundsCenter?.longitude ?: -5.92)
     }
     var zoom by remember { mutableIntStateOf(AppSettingsStore.mapZoom(context)) }
     var userPanned by remember(routeKey) { mutableStateOf(false) }
     var tiles by remember { mutableStateOf<List<RouteMapTile>>(emptyList()) }
     var status by remember { mutableStateOf("Esperando posición GPS") }
 
-    LaunchedEffect(latitude, longitude, followPosition, userPanned) {
-        if (followPosition && !userPanned && latitude != null && longitude != null) {
+    // Center on the freshest GPS fix before and during a session, until the user pans manually.
+    LaunchedEffect(latitude, longitude, userPanned) {
+        if (!userPanned && latitude != null && longitude != null) {
             centerLat = latitude
             centerLon = longitude
         }
@@ -171,6 +172,12 @@ fun OnlineRouteMap(
                 }
                 val radius = if (buoy.turnType.equals("UTURN", true)) 6f else 4.5f
                 drawCircle(color, radius, screen(GeoSample(buoy.latitude, buoy.longitude)))
+            }
+            if (latitude != null && longitude != null) {
+                val current = screen(GeoSample(latitude, longitude))
+                drawCircle(Color(0x6642D9FF), radius = 8f, center = current)
+                drawCircle(Color.White, radius = 4.5f, center = current)
+                drawCircle(Color(0xFF07111C), radius = 2.2f, center = current)
             }
         }
         if (tiles.isEmpty()) Text(status, Modifier.align(Alignment.Center), color = Color.White,

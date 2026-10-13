@@ -28,6 +28,11 @@ object PhoneDataStore {
     const val ROUTE_COLOR_CYAN = "FF42D9FF"
     const val ROUTE_COLOR_PINK = "FFFF4FA3"
     private val routeColorPalette = setOf(ROUTE_COLOR_ORANGE, ROUTE_COLOR_CYAN, ROUTE_COLOR_PINK)
+    private fun normalizeRouteColor(hex: String?): String {
+        val raw = hex?.trim()?.removePrefix("#")?.uppercase().orEmpty()
+        val normalized = when (raw.length) { 6 -> "FF$raw"; 8 -> raw; else -> "" }
+        return normalized.takeIf { it in routeColorPalette } ?: ROUTE_COLOR_ORANGE
+    }
 
     private const val PREFS = "openkayak_phone"
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -174,16 +179,21 @@ object PhoneDataStore {
         context: Context, weightKg: Double, ageYears: Int, heightCm: Int, biologicalSex: String,
         mapZoom: Int, gpsAccuracy: Float, routeColorHex: String
     ) {
-        val safeRouteColor = routeColorHex.takeIf { it in routeColorPalette } ?: ROUTE_COLOR_ORANGE
+        val safeRouteColor = normalizeRouteColor(routeColorHex)
         val safeSex = biologicalSex.takeIf { it in setOf("FEMALE", "MALE", "UNSPECIFIED") } ?: "UNSPECIFIED"
         prefs(context).edit().putFloat("weight_kg", weightKg.toFloat()).putInt("age_years", ageYears)
             .putInt("height_cm", heightCm.coerceIn(80, 230)).putString("biological_sex", safeSex)
             .putInt("map_zoom", mapZoom.coerceIn(14, 17)).putFloat("gps_accuracy", gpsAccuracy.coerceIn(10f, 65f))
             .putString("route_color_hex", safeRouteColor).apply()
     }
+    fun saveRouteColor(context: Context, routeColorHex: String): String {
+        val safe = normalizeRouteColor(routeColorHex)
+        prefs(context).edit().putString("route_color_hex", safe).apply()
+        return safe
+    }
+
     fun routeColorHex(context: Context): String =
-        prefs(context).getString("route_color_hex", ROUTE_COLOR_ORANGE)
-            ?.takeIf { it in routeColorPalette } ?: ROUTE_COLOR_ORANGE
+        normalizeRouteColor(prefs(context).getString("route_color_hex", ROUTE_COLOR_ORANGE))
 
     fun weightKg(context: Context) = prefs(context).getFloat("weight_kg", 70f).toDouble()
     fun ageYears(context: Context) = prefs(context).getInt("age_years", 30)
