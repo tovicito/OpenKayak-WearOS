@@ -100,23 +100,39 @@ class PhoneSyncService : WearableListenerService() {
     companion object {
         private val io: ExecutorService = Executors.newSingleThreadExecutor()
 
-        fun requestSync(context: Context) {
-            val app = context.applicationContext
+        private val retryScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+        private const val MAX_SYNC_RETRIES = 12
+
+        fun requestSync(context: Context) = requestSyncAttempt(context.applicationContext, 0)
+
+        private fun requestSyncAttempt(app: Context, attempt: Int) {
             io.execute {
+                var retry = false
                 runCatching {
-                    // Send persisted settings before asking for history, repairing stale watch colors on every manual sync.
+                    // Settings are durable DataItems; history needs a live node to receive the request message.
                     publishSettingsNow(
                         app, PhoneDataStore.weightKg(app), PhoneDataStore.ageYears(app),
                         PhoneDataStore.mapZoom(app), PhoneDataStore.gpsAccuracy(app), PhoneDataStore.routeColorHex(app)
                     )
                     val nodes = Tasks.await(Wearable.getNodeClient(app).connectedNodes)
-                    nodes.forEach { node ->
-                        Tasks.await(Wearable.getMessageClient(app).sendMessage(
-                            node.id, "/openkayak/request-sync", byteArrayOf()
-                        ))
+                    if (nodes.isEmpty()) {
+                        retry = attempt < MAX_SYNC_RETRIES
+                        Log.w("OpenKayakSync", "No hay reloj conectado; intento ${attempt + 1}/$MAX_SYNC_RETRIES")
+                    } else {
+                        nodes.forEach { node ->
+                            Tasks.await(Wearable.getMessageClient(app).sendMessage(
+                                node.id, "/openkayak/request-sync", byteArrayOf()
+                            ))
+                        }
+                        Log.d("OpenKayakSync", "Solicitud de historial enviada a ${nodes.size} dispositivo(s)")
                     }
-                    Log.d("OpenKayakSync", "Solicitud de historial enviada a ${nodes.size} dispositivo(s)")
-                }.onFailure { Log.e("OpenKayakSync", "No se pudo solicitar la sincronización", it) }
+                }.onFailure {
+                    Log.e("OpenKayakSync", "No se pudo solicitar la sincronización", it)
+                    retry = attempt < MAX_SYNC_RETRIES
+                }
+                if (retry) retryScheduler.schedule(
+                    { requestSyncAttempt(app, attempt + 1) }, 5, java.util.concurrent.TimeUnit.SECONDS
+                )
             }
         }
 
