@@ -1,32 +1,25 @@
-# OpenKayak-WearOS · reconstrucción 2.0
+# OpenKayak-WearOS 2.3
 
-Aplicación independiente para piragüismo en español, orientada a Wear OS 5 y a un Xiaomi Watch 2 Pro montado en la cubierta de la piragua. Esta rama reinicia los archivos de aplicación y conserva el identificador `com.openkayak.app`.
+Aplicación gratuita para piragüismo con app Wear OS y app Android complementaria.
 
-## Funciones de esta preview (compilación CI y pruebas unitarias correctas)
+## Novedades 2.3
+- El reloj transmite entrenamientos, estadísticas de FC, muestras de FC disponibles y la ruta GPX por Wear OS Data Layer.
+- El móvil abre un resumen ampliado en una ventana separada dentro de la app: duración, distancia, velocidad media, kcal estimadas, paladas, FC media/máxima/mínima y mapa de ruta completa.
+- Gráficas de FC y velocidad con muestras cada 5 segundos y tabla temporal con FC, velocidad y coordenadas GPS.
+- Borrado de entrenamientos desde el móvil con confirmación y solicitud de borrado en el reloj cuando esté conectado.
+- Perfil de peso, edad y altura sincronizable entre móvil y reloj.
+- Mantiene boyas, circuitos, ajustes de mapa, GPS, BLE HR, AOD y Health Connect.
 
-- UI oscura de alto contraste basada en Wear Compose Material 3 Expressive, siete páginas y flechas laterales permanentes, con panel AOD de circuito circular.
-- Dashboard de distancia, tiempo, velocidad y ritmo por kilómetro.
-- Servicio GPS en primer plano con reintentos si el proveedor se activa tarde, última posición provisional, filtro de saltos y trazado GPX con los puntos aceptados.
-- Exploración, selección y reconexión progresiva de bandas BLE que anuncien el servicio estándar de frecuencia cardíaca; descriptor CCCD confirmado, parser de pulso de 8/16 bits y vigilancia de muestras obsoletas.
-- Modo AOD de negro puro, refresco reducido, métricas clave y botón visible «SALIR AOD».
-- Detector conservador de paladas con bloqueo por velocidad/precisión GPS y patrón de picos rítmicos. Sigue necesitando validación en la cubierta.
-- Modelo local softmax de tres clases entrenado con trazas GPS sintéticas, memoria persistente de los eventos detectados y análisis del GPX para agrupar posibles boyas repetidas.
-- Ventana post-entreno con mapa online, FC media/máxima/mínima, kcal estimadas según peso configurable, paladas, giros y opciones para guardar/borrar sesión y circuito. Health Connect se encola tras guardar el entrenamiento.
-- Exportación de la ruta en GPX y pruebas unitarias iniciales del parser BLE y del detector de paladas.
-- Mapa offline: importa un paquete raster MBTiles con atribución del proveedor; el reloj busca primero sus teselas locales y conserva hasta 512 teselas de las zonas vistas con conexión para revisarlas después sin red.
+## Precisión y límites
+Las gráficas usan los datos realmente recibidos. La FC se registra aproximadamente cada 5 segundos; si faltan muestras, se muestran como ausentes. La velocidad se estima a partir de marcas temporales y coordenadas GPX y depende de la calidad del GPS. Las calorías son una estimación basada en peso y duración, no una medición. La altura se guarda en el perfil pero no hace que las calorías sean exactas. El detector de paladas es experimental.
 
-## Límites conocidos de la versión
+Los mapas consultan teselas online y mantienen una caché limitada. Los paquetes MBTiles deben proceder de un proveedor que permita uso offline; no se precargan áreas masivamente desde tile.openstreetmap.org.
 
-La pantalla de ruta carga teselas de OpenStreetMap por Internet cuando el usuario las está viendo, conserva una caché local limitada y dibuja el recorrido encima. En Ajustes se puede importar un paquete raster MBTiles (hasta 512 MiB) que incluya la atribución del proveedor; las teselas de ese paquete se consultan antes que las online. La app no precarga áreas desde tile.openstreetmap.org porque la política oficial de ese servidor prohíbe el uso offline masivo. Los paquetes de mapas deben proceder de un proveedor que permita uso offline. Tampoco aprende aún automáticamente circuitos repetidos. La detección de paladas es experimental; oleaje y golpes rítmicos aún pueden crear falsos positivos. Hay que validarla en tu piragua. No se ha validado todavía en agua real ni con tu banda BLE concreta.
-
-El botón de salida de AOD intenta reactivar el reloj, pero Wear OS puede requerir que el primer toque despierte la pantalla antes de aceptar el toque del botón. Las frecuencias de refresco en AOD dependen del sistema. Health Connect solicita los permisos de ejercicio, distancia y frecuencia cardíaca que usa esta versión. Si no está disponible en el reloj, Ajustes muestra el motivo.
-
-## Compilación local
-
-Requiere JDK 17 y Android SDK Platform 36 (AGP 8.9.1 / Gradle 8.11.1):
+## Compilar
+Requiere JDK 17 y Android SDK Platform 36.
 
 ```bash
-./gradlew --no-daemon clean testDebugUnitTest assembleDebug
+./gradlew --no-daemon clean testDebugUnitTest :app:assembleDebug :phone:assembleDebug
 ```
 
-GitHub Actions ejecuta pruebas unitarias y genera un APK debug. En compilaciones push correctas de esta rama, el flujo adjunta el APK a una GitHub pre-release de prueba. No es una compilación certificada libre de errores ni una release firmada para Google Play. El clasificador se entrena con ejemplos sintéticos y no reconoce visualmente boyas físicas.
+GitHub Actions compila ambos APK debug y publica una pre-release al terminar correctamente. No son APKs firmados para Google Play.

@@ -1,4 +1,4 @@
-name: OpenKayak v2.2.2 · reliable sync repair
+name: OpenKayak v2.3 · workout analytics
 
 on:
   push:
@@ -42,14 +42,14 @@ jobs:
       - name: Name installable APKs
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.2.2-sync-repair-WearOS.apk
-          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.2.2-sync-repair-Android.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.3-WearOS.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.3-Android.apk
           sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openkayak-v2.2.2-sync-repair-apks
+          name: openkayak-v2.3-apks
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -58,21 +58,21 @@ jobs:
         if: success() && github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.2.2-sync-repair
+          tag_name: v2.3
           target_commitish: ${{ github.sha }}
-          name: OpenKayak v2.2.2 · sincronización fiable
+          name: OpenKayak v2.3 · resumen de entrenamientos
           prerelease: true
           draft: false
           files: |
-            dist/OpenKayak-v2.1.color-WearOS.apk
-            dist/OpenKayak-v2.1.color-Android.apk
+            dist/OpenKayak-v2.3-WearOS.apk
+            dist/OpenKayak-v2.3-Android.apk
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
           body: |
-            OpenKayak v2.2.2-sync-repair. Ambos APK son builds debug para pruebas.
-            - OpenKayak-v2.1.color-WearOS.apk: app para Wear OS; incluye reenvío fiable de entrenamientos y circuitos mediante Wear OS Data Layer.
-            - OpenKayak-v2.1.color-Android.apk: app móvil; recibe entrenamientos y circuitos, conserva rutas existentes si falla una transferencia GPX y refleja el borrado de circuitos.
+            OpenKayak v2.3. Ambos APK son builds debug para pruebas.
+            - OpenKayak-v2.3-WearOS.apk: app Wear OS con sincronización de entrenamientos y muestras de FC.
+            - OpenKayak-v2.3-Android.apk: resumen ampliado, mapa, gráficas FC/velocidad cada 5 s, tabla y borrado de sesiones.
             - SHA256SUMS.txt: hashes SHA-256 para verificar las descargas.
-            Cada reintento genera una revisión nueva del Data Layer para que la sincronización manual vuelva a disparar eventos aunque los datos no hayan cambiado. Las escrituras esperan confirmación y registran errores. Cambios limitados a la capa de sincronización, sin modificar pantallas ni lógica de entrenamiento.
+            El reloj transmite las muestras de FC disponibles junto al GPX y métricas. El móvil permite abrir el detalle y borrar sesiones. Los APK son builds debug de prueba.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

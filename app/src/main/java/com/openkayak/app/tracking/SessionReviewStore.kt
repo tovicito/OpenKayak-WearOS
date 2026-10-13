@@ -14,9 +14,11 @@ object AthleteProfileStore {
     private const val PREFS = "openkayak_athlete_profile"
     fun weightKg(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getFloat("weight_kg", 70f).toDouble()
     fun ageYears(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("age_years", 30)
-    fun save(context: Context, weightKg: Double, ageYears: Int): Boolean {
-        if (!weightKg.isFinite() || weightKg !in 25.0..250.0 || ageYears !in 8..100) return false
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat("weight_kg", weightKg.toFloat()).putInt("age_years", ageYears).apply()
+    fun heightCm(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt("height_cm", 170).coerceIn(100, 230)
+    fun save(context: Context, weightKg: Double, ageYears: Int): Boolean = save(context, weightKg, ageYears, heightCm(context))
+    fun save(context: Context, weightKg: Double, ageYears: Int, heightCm: Int): Boolean {
+        if (!weightKg.isFinite() || weightKg !in 25.0..250.0 || ageYears !in 8..100 || heightCm !in 100..230) return false
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat("weight_kg", weightKg.toFloat()).putInt("age_years", ageYears).putInt("height_cm", heightCm).apply()
         return true
     }
 }

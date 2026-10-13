@@ -52,6 +52,7 @@ object WearSyncBridge {
             map.putDouble("distanceM", distanceM); map.putInt("strokes", strokes)
             map.putInt("averageBpm", averageBpm); map.putInt("maxBpm", maxBpm); map.putInt("minBpm", minBpm)
             map.putInt("calories", calories)
+            map.putString("hrSamples", com.openkayak.app.tracking.TrackStore.heartRateSamples(context).filter { it.timeMs in startAt..endAt }.joinToString(";") { it.timeMs.toString() + "," + it.bpm })
             // Force a fresh Data Layer event when the user manually retries unchanged workouts.
             map.putLong("syncRevision", System.currentTimeMillis())
             val file = File(trackPath)

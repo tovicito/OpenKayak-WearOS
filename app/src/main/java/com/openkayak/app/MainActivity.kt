@@ -698,6 +698,7 @@ private fun SettingsPage(
 ) {
     var weightText by remember { mutableStateOf(String.format(Locale.US, "%.1f", AthleteProfileStore.weightKg(context))) }
     var ageText by remember { mutableStateOf(AthleteProfileStore.ageYears(context).toString()) }
+    var heightText by remember { mutableStateOf(AthleteProfileStore.heightCm(context).toString()) }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("AJUSTES Y DATOS", color = if (isAmbient) Color.LightGray else Mint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(7.dp))
@@ -714,12 +715,17 @@ private fun SettingsPage(
                     Text("Edad", color = Quiet, fontSize = 7.sp)
                     BasicTextField(value = ageText, onValueChange = { ageText = it.filter(Char::isDigit).take(3) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp), modifier = Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(8.dp)).padding(7.dp))
                 }
+                Column(Modifier.weight(1f)) {
+                    Text("Altura cm", color = Quiet, fontSize = 7.sp)
+                    BasicTextField(value = heightText, onValueChange = { heightText = it.filter(Char::isDigit).take(3) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp), modifier = Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(8.dp)).padding(7.dp))
+                }
             }
             ActionPill("GUARDAR PERFIL", Panel2, Ice, {
                 val weight = weightText.replace(',', '.').toDoubleOrNull()
                 val age = ageText.toIntOrNull()
-                if (weight != null && age != null && AthleteProfileStore.save(context, weight, age)) Toast.makeText(context, "Perfil guardado", Toast.LENGTH_SHORT).show()
-                else Toast.makeText(context, "Peso (25–250 kg) o edad (8–100) no válidos", Toast.LENGTH_LONG).show()
+                val height = heightText.toIntOrNull()
+                if (weight != null && age != null && height != null && AthleteProfileStore.save(context, weight, age, height)) Toast.makeText(context, "Perfil guardado", Toast.LENGTH_SHORT).show()
+                else Toast.makeText(context, "Comprueba peso, edad y altura (100–230 cm)", Toast.LENGTH_LONG).show()
             }, Modifier.fillMaxWidth())
         }
         if (!isAmbient) {
@@ -740,7 +746,7 @@ private fun SettingsPage(
         }
         Spacer(Modifier.height(8.dp))
         Text("AOD: negro puro, cifras de alto contraste y refresco reducido. «SALIR AOD» solicita despertar la pantalla; el sistema puede exigir un toque para reactivarla.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
-        Text("Versión 2.1 · Wear OS 5 · mapa interactivo", color = if (isAmbient) Color.DarkGray else Quiet,
+        Text("Versión 2.3 · Wear OS 5 · mapa interactivo", color = if (isAmbient) Color.DarkGray else Quiet,
             fontSize = 7.sp, textAlign = TextAlign.Center)
     }
 }

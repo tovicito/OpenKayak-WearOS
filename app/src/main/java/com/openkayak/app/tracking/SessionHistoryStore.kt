@@ -47,6 +47,17 @@ object SessionHistoryStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, encoded).apply()
     }
 
+    fun delete(context: Context, startAt: Long): Boolean {
+        val all = all(context)
+        val target = all.firstOrNull { it.startAt == startAt } ?: return false
+        target.trackPath.takeIf { it.isNotBlank() }?.let { runCatching { java.io.File(it).delete() } }
+        val encoded = all.filterNot { it.startAt == startAt }.joinToString(";") {
+            listOf(it.startAt, it.endAt, it.elapsedMs, it.distanceM, it.strokes, it.averageBpm, it.maxBpm, it.minBpm, it.calories, it.trackPath).joinToString(",")
+        }
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, encoded).apply()
+        return true
+    }
+
     private fun decode(raw: String): SessionSummary? {
         val p = raw.split(',', limit = 10)
         if (p.size != 6 && p.size != 10) return null

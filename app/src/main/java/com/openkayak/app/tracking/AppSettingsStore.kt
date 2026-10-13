@@ -21,8 +21,8 @@ object AppSettingsStore {
         val safeHex = hex.uppercase().takeIf { it in routeColorPalette } ?: DEFAULT_ROUTE_COLOR_HEX
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(ROUTE_COLOR_KEY, safeHex).apply()
     }
-    fun save(context: Context, weightKg: Double, ageYears: Int, mapZoom: Int, gpsAccuracyLimitM: Float) {
-        AthleteProfileStore.save(context, weightKg, ageYears)
+    fun save(context: Context, weightKg: Double, ageYears: Int, mapZoom: Int, gpsAccuracyLimitM: Float, heightCm: Int = AthleteProfileStore.heightCm(context)) {
+        AthleteProfileStore.save(context, weightKg, ageYears, heightCm)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putInt("map_zoom", mapZoom.coerceIn(14, 17))
             .putFloat("gps_accuracy_limit_m", gpsAccuracyLimitM.coerceIn(10f, 65f)).apply()

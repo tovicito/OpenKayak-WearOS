@@ -59,7 +59,8 @@ class WearSyncService : WearableListenerService() {
                     data.getDouble("weightKg", AthleteProfileStore.weightKg(this)),
                     data.getInt("ageYears", AthleteProfileStore.ageYears(this)),
                     data.getInt("mapZoom", AppSettingsStore.mapZoom(this)),
-                    data.getFloat("gpsAccuracyLimitM", AppSettingsStore.gpsAccuracyLimit(this))
+                    data.getFloat("gpsAccuracyLimitM", AppSettingsStore.gpsAccuracyLimit(this)),
+                    data.getInt("heightCm", AthleteProfileStore.heightCm(this))
                 )
                 AppSettingsStore.setRouteColorHex(
                     this, data.getString("routeColorHex") ?: AppSettingsStore.routeColorHex(this)

@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,6 +20,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -70,10 +76,13 @@ private fun OpenKayakPhone() {
     var circuitPath by remember { mutableStateOf(PhoneDataStore.currentCircuitPath(context)) }
     var status by remember { mutableStateOf("Abre OpenKayak en el reloj y solicita la sincronización.") }
     var selectedStart by remember { mutableStateOf<Long?>(null) }
+    var detailWorkout by remember { mutableStateOf<PhoneWorkout?>(null) }
+    var deleteCandidate by remember { mutableStateOf<PhoneWorkout?>(null) }
     var picked by remember { mutableStateOf(Trasona) }
     var buoyType by remember { mutableStateOf("BUOY") }
     var weightText by remember { mutableStateOf(PhoneDataStore.weightKg(context).toString()) }
     var ageText by remember { mutableStateOf(PhoneDataStore.ageYears(context).toString()) }
+    var heightText by remember { mutableStateOf(PhoneDataStore.heightCm(context).toString()) }
     var zoom by remember { mutableIntStateOf(PhoneDataStore.mapZoom(context)) }
     var accuracy by remember { mutableFloatStateOf(PhoneDataStore.gpsAccuracy(context)) }
     var routeColorHex by remember { mutableStateOf(PhoneDataStore.routeColorHex(context)) }
@@ -101,7 +110,7 @@ private fun OpenKayakPhone() {
 
     LaunchedEffect(Unit) {
         PhoneSyncService.publishSettings(
-            context, PhoneDataStore.weightKg(context), PhoneDataStore.ageYears(context),
+            context, PhoneDataStore.weightKg(context), PhoneDataStore.ageYears(context), PhoneDataStore.heightCm(context),
             PhoneDataStore.mapZoom(context), PhoneDataStore.gpsAccuracy(context), PhoneDataStore.routeColorHex(context)
         )
         PhoneSyncService.requestSync(context)
@@ -120,7 +129,7 @@ private fun OpenKayakPhone() {
                 title = {
                     Column {
                         Text("OPENKAYAK", fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp)
-                        Text("V2.1 · CENTRO DE CONTROL", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
+                        Text("V2.3 · CENTRO DE CONTROL", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
                     }
                 },
                 actions = {
@@ -149,7 +158,7 @@ private fun OpenKayakPhone() {
             when (page) {
                 0 -> WorkoutsPage(
                     workouts, selectedStart,
-                    onSelect = { start -> selectedStart = start; page = 1 },
+                    onSelect = { start -> selectedStart = start; detailWorkout = workouts.firstOrNull { it.startAt == start } },
                     onSync = { PhoneSyncService.requestSync(context); status = "Solicitando el historial completo del reloj…" }
                 )
                 1 -> MapAndBuoysPage(
@@ -182,26 +191,103 @@ private fun OpenKayakPhone() {
                     }
                 )
                 else -> SettingsPage(
-                    weightText, ageText, zoom, accuracy, routeColorHex,
+                    weightText, ageText, heightText, zoom, accuracy, routeColorHex,
                     onWeight = { weightText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.take(6) },
                     onAge = { ageText = it.filter(Char::isDigit).take(3) },
+                    onHeight = { heightText = it.filter(Char::isDigit).take(3) },
                     onZoom = { zoom = it },
                     onAccuracy = { accuracy = it },
                     onRouteColor = { routeColorHex = it },
                     onSave = {
                         val weight = weightText.replace(',', '.').toDoubleOrNull()
                         val age = ageText.toIntOrNull()
-                        if (weight == null || age == null || weight !in 25.0..250.0 || age !in 8..100) {
-                            status = "Comprueba el peso (25–250 kg) y la edad (8–100)."
+                        val height = heightText.toIntOrNull()
+                        if (weight == null || age == null || height == null || weight !in 25.0..250.0 || age !in 8..100 || height !in 100..230) {
+                            status = "Comprueba peso (25–250 kg), edad (8–100) y altura (100–230 cm)."
                         } else {
-                            PhoneDataStore.saveSettings(context, weight, age, zoom, accuracy, routeColorHex)
-                            PhoneSyncService.publishSettings(context, weight, age, zoom, accuracy, routeColorHex)
+                            PhoneDataStore.saveSettings(context, weight, age, height, zoom, accuracy, routeColorHex)
+                            PhoneSyncService.publishSettings(context, weight, age, height, zoom, accuracy, routeColorHex)
                             status = "Ajustes guardados y enviados al reloj."
                         }
                     }
                 )
             }
+
+    detailWorkout?.let { workout -> WorkoutDetailDialog(workout, { detailWorkout = null }, { deleteCandidate = workout; detailWorkout = null }) }
+    deleteCandidate?.let { workout ->
+        AlertDialog(onDismissRequest = { deleteCandidate = null }, title = { Text("Borrar entrenamiento") },
+            text = { Text("Se borrará del móvil y se enviará la orden al reloj cuando esté conectado.") },
+            confirmButton = { TextButton(onClick = {
+                PhoneDataStore.deleteWorkout(context, workout.startAt)
+                PhoneSyncService.deleteWorkout(context, workout.startAt)
+                workouts = PhoneDataStore.allWorkouts(context); selectedStart = null; deleteCandidate = null
+                status = "Entrenamiento borrado del móvil; orden enviada al reloj."
+            }) { Text("Borrar", color = Pink) } },
+            dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("Cancelar") } })
+    }
+}
+
+@Composable
+private fun WorkoutDetailDialog(workout: PhoneWorkout, onDismiss: () -> Unit, onDelete: () -> Unit) {
+    val context = LocalContext.current
+    val samples = remember(workout.startAt, workout.hrSamples, workout.gpxPath) { PhoneDataStore.telemetry(workout) }
+    val route = remember(workout.gpxPath) { PhoneDataStore.routePoints(workout.gpxPath) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxWidth(0.96f).fillMaxHeight(0.94f), shape = RoundedCornerShape(24.dp), color = Navy) {
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("RESUMEN AMPLIADO", Modifier.weight(1f), color = Mint, fontWeight = FontWeight.ExtraBold)
+                    TextButton(onClick = onDismiss) { Text("Cerrar") }
+                }
+                Text("Distancia %.2f km · Tiempo %s · kcal %d · paladas %d".format(Locale.US, workout.distanceM / 1000.0, duration(workout.elapsedMs), workout.calories, workout.strokes), color = Color.White, fontSize = 11.sp)
+                Text("FC media %s · máxima %s · mínima %s lpm".format(if (workout.averageBpm > 0) workout.averageBpm else "--", if (workout.maxBpm > 0) workout.maxBpm else "--", if (workout.minBpm > 0) workout.minBpm else "--"), color = Pink, fontSize = 11.sp)
+                Text("Velocidad media %.2f km/h".format(Locale.US, if (workout.elapsedMs > 0) workout.distanceM / (workout.elapsedMs / 3600000.0) else 0.0), color = Color.White, fontSize = 11.sp)
+                Text("MAPA COMPLETO", color = Mint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                if (route.isNotEmpty()) PhoneMapPicker(Modifier.fillMaxWidth().height(145.dp), route, emptyList(), route[route.size / 2], route.last(), PhoneDataStore.routeColorHex(context), {})
+                else Text("Sin ruta GPS recibida", color = Muted, fontSize = 10.sp)
+                Text("FC cada 5 s", color = Mint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                DetailChart(samples.filter { it.bpm > 0 }.map { it.seconds to it.bpm.toDouble() }, Pink)
+                Text("Velocidad cada 5 s", color = Mint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                DetailChart(samples.map { it.seconds to it.speedKmh }, Color(0xFF70C5F0))
+                Text("TABLA DE MUESTRAS · cada 5 segundos", color = Mint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(7.dp)).padding(5.dp)) {
+                    Text("Tiempo", Modifier.weight(1f), color = Muted, fontSize = 9.sp)
+                    Text("FC", Modifier.weight(0.7f), color = Muted, fontSize = 9.sp)
+                    Text("km/h", Modifier.weight(0.8f), color = Muted, fontSize = 9.sp)
+                    Text("GPS", Modifier.weight(1.7f), color = Muted, fontSize = 9.sp)
+                }
+                LazyColumn(Modifier.weight(1f)) {
+                    items(samples, key = { it.seconds }) { sample ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            Text(duration(sample.seconds * 1000L), Modifier.weight(1f), color = Color.White, fontSize = 9.sp)
+                            Text(if (sample.bpm > 0) sample.bpm.toString() else "--", Modifier.weight(0.7f), color = Pink, fontSize = 9.sp)
+                            Text("%.2f".format(Locale.US, sample.speedKmh), Modifier.weight(0.8f), color = Color(0xFF70C5F0), fontSize = 9.sp)
+                            Text(if (sample.latitude != null && sample.longitude != null) "%.4f, %.4f".format(Locale.US, sample.latitude, sample.longitude) else "--", Modifier.weight(1.7f), color = Muted, fontSize = 8.sp)
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(contentColor = Pink)) { Text("Borrar entreno") }
+                    Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Listo") }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun DetailChart(values: List<Pair<Int, Double>>, tint: Color) {
+    if (values.size < 2) { Text("Datos insuficientes para dibujar la gráfica.", color = Muted, fontSize = 9.sp); return }
+    Canvas(Modifier.fillMaxWidth().height(43.dp).background(Panel, RoundedCornerShape(8.dp)).padding(5.dp)) {
+        val lo = values.minOf { it.second }; val hi = values.maxOf { it.second }.let { if (it <= lo) lo + 1.0 else it }
+        val end = values.last().first.coerceAtLeast(1); val path = Path()
+        values.forEachIndexed { i, v ->
+            val x = v.first.toFloat() / end * size.width
+            val y = size.height - ((v.second - lo) / (hi - lo)).toFloat() * size.height
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, tint, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+        drawLine(Color(0xFF34434F), Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
     }
 }
 
@@ -311,8 +397,8 @@ private fun MapAndBuoysPage(
 
 @Composable
 private fun SettingsPage(
-    weightText: String, ageText: String, zoom: Int, accuracy: Float, routeColorHex: String,
-    onWeight: (String) -> Unit, onAge: (String) -> Unit, onZoom: (Int) -> Unit,
+    weightText: String, ageText: String, heightText: String, zoom: Int, accuracy: Float, routeColorHex: String,
+    onWeight: (String) -> Unit, onAge: (String) -> Unit, onHeight: (String) -> Unit, onZoom: (Int) -> Unit,
     onAccuracy: (Float) -> Unit, onRouteColor: (String) -> Unit, onSave: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(bottom = 16.dp)) {
@@ -323,6 +409,9 @@ private fun SettingsPage(
             singleLine = true, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(value = ageText, onValueChange = onAge, label = { Text("Edad del perfil") },
+            singleLine = true, modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(value = heightText, onValueChange = onHeight, label = { Text("Altura (cm)") },
             singleLine = true, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(14.dp))
         Text("Color del circuito", color = Color.White, fontWeight = FontWeight.SemiBold)

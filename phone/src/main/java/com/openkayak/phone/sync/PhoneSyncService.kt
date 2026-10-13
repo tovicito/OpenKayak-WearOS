@@ -46,7 +46,7 @@ class PhoneSyncService : WearableListenerService() {
                     startAt, data.getLong("endAt", startAt), data.getLong("elapsedMs", 0L),
                     data.getDouble("distanceM", 0.0), data.getInt("strokes", 0),
                     data.getInt("averageBpm", 0), data.getInt("maxBpm", 0), data.getInt("minBpm", 0),
-                    data.getInt("calories", 0), gpxPath
+                    data.getInt("calories", 0), gpxPath, data.getString("hrSamples").orEmpty()
                 ))
             }
             path == "/openkayak/buoys/current" -> {
@@ -80,6 +80,15 @@ class PhoneSyncService : WearableListenerService() {
 
     companion object {
         private val io: ExecutorService = Executors.newSingleThreadExecutor()
+        fun deleteWorkout(context: android.content.Context, startAt: Long) {
+            val app = context.applicationContext
+            io.execute {
+                runCatching {
+                    val nodes = Tasks.await(Wearable.getNodeClient(app).connectedNodes)
+                    nodes.forEach { node -> Tasks.await(Wearable.getMessageClient(app).sendMessage(node.id, "/openkayak/delete-workout", startAt.toString().toByteArray(Charsets.UTF_8))) }
+                }.onFailure { Log.e("OpenKayakSync", "No se pudo propagar el borrado", it) }
+            }
+        }
         fun requestSync(context: android.content.Context) {
             val app = context.applicationContext
             io.execute {
@@ -104,12 +113,13 @@ class PhoneSyncService : WearableListenerService() {
                 .onFailure { Log.e("OpenKayakSync", "No se pudieron enviar las boyas al reloj", it) } }
         }
         fun publishSettings(
-            context: android.content.Context, weightKg: Double, ageYears: Int,
+            context: android.content.Context, weightKg: Double, ageYears: Int, heightCm: Int,
             mapZoom: Int, gpsAccuracy: Float, routeColorHex: String
         ) {
             val request = PutDataMapRequest.create("/openkayak/settings")
             request.dataMap.putDouble("weightKg", weightKg)
             request.dataMap.putInt("ageYears", ageYears)
+            request.dataMap.putInt("heightCm", heightCm)
             request.dataMap.putInt("mapZoom", mapZoom)
             request.dataMap.putFloat("gpsAccuracyLimitM", gpsAccuracy)
             request.dataMap.putString("routeColorHex", routeColorHex)
