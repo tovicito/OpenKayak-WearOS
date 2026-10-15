@@ -1,6 +1,12 @@
-# OpenKayak-WearOS 2.3
+# OpenKayak-WearOS 2.5
 
 Aplicación gratuita para piragüismo con app Wear OS y app Android complementaria.
+
+## Novedades 2.5
+- Asistente de voz activado manualmente desde el reloj: distancia, velocidad, tiempo, marcar vuelta y solicitud de finalización con confirmación.
+- Reconocimiento en español con preferencia por el motor local cuando el reloj lo admite; no mantiene el micrófono abierto continuamente.
+- Selector de unidades de velocidad en el reloj: km/h, mph y m/s.
+- El asistente consulta el estado real de TrackStore y no modifica el servicio GPS mientras escucha.
 
 ## Novedades 2.3
 - El reloj transmite entrenamientos, estadísticas de FC, muestras de FC disponibles y la ruta GPX por Wear OS Data Layer.

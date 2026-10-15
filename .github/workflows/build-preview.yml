@@ -1,4 +1,4 @@
-name: OpenKayak v2.4 · workout analytics
+name: OpenKayak v2.5 · asistente de voz y unidades de velocidad
 
 on:
   push:
@@ -42,14 +42,14 @@ jobs:
       - name: Name installable APKs
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.4-WearOS.apk
-          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.4-Android.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.5-WearOS.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.5-Android.apk
           sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openkayak-v2.4-apks
+          name: openkayak-v2.5-apks
           path: dist/*
           if-no-files-found: error
           retention-days: 90
@@ -58,22 +58,23 @@ jobs:
         if: success() && github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.4
+          tag_name: v2.5
           target_commitish: ${{ github.sha }}
-          name: OpenKayak v2.4 · mapa GPS y circuitos GPX
+          name: OpenKayak v2.5 · asistente de voz y unidades de velocidad
           prerelease: true
           draft: false
           overwrite_files: true
           files: |
-            dist/OpenKayak-v2.4-WearOS.apk
-            dist/OpenKayak-v2.4-Android.apk
+            dist/OpenKayak-v2.5-WearOS.apk
+            dist/OpenKayak-v2.5-Android.apk
             dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
           body: |
-            OpenKayak v2.4 · correcciones del mapa GPS y circuitos GPX. Ambos APK son builds debug para pruebas.
-            - OpenKayak-v2.4-WearOS.apk: centra el mapa en la posición GPS disponible y muestra en la página de ruta los circuitos GPX importados desde el móvil. La línea del circuito usa el color configurado en Ajustes.
-            - OpenKayak-v2.4-Android.apk: mantiene la importación GPX, sincronización de circuitos y selector de color de ruta.
-            - SHA256SUMS.txt: hashes SHA-256 para verificar las descargas.
-            El análisis GPX del reloj admite puntos trkpt, rtept y wpt, incluidos archivos sin marcas de tiempo. El circuito se transfiere mediante Wear OS Data Layer. Los APK son builds debug de prueba; comprueba la sincronización con ambos dispositivos conectados.
+            OpenKayak v2.5 · asistente de voz y selector de unidades de velocidad. Ambos APK son builds debug para pruebas.
+            - Wear OS: comandos de voz en español para consultar distancia, velocidad y tiempo, marcar una vuelta y solicitar la finalización con confirmación.
+            - El reconocimiento prefiere el motor local cuando está disponible; el micrófono solo se activa al pulsar el botón.
+            - Selector de velocidad: km/h, mph y m/s.
+            - SHA256SUMS.txt contiene hashes SHA-256 para verificar las descargas.
+            Comprueba los comandos en el reloj real y verifica que el GPS continúa registrando durante la escucha.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

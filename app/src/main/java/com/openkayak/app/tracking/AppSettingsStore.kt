@@ -7,6 +7,21 @@ object AppSettingsStore {
     const val PREFS_NAME = "openkayak_app_settings"
     const val ROUTE_COLOR_KEY = "route_color_hex"
     const val DEFAULT_ROUTE_COLOR_HEX = "FFFF8500"
+    private const val SPEED_UNIT_KEY = "speed_unit"
+    private val speedUnits = setOf("km/h", "mph", "m/s")
+    fun speedUnit(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SPEED_UNIT_KEY, "km/h")
+            ?.takeIf { it in speedUnits } ?: "km/h"
+    fun setSpeedUnit(context: Context, unit: String) {
+        val safeUnit = unit.takeIf { it in speedUnits } ?: "km/h"
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(SPEED_UNIT_KEY, safeUnit).apply()
+    }
+    fun speedValue(context: Context, speedKmh: Double): Double = when (speedUnit(context)) {
+        "mph" -> speedKmh / 1.609344
+        "m/s" -> speedKmh / 3.6
+        else -> speedKmh
+    }
+    fun speedUnitLabel(context: Context): String = speedUnit(context)
     private const val PREFS = PREFS_NAME
     private val routeColorPalette = setOf(DEFAULT_ROUTE_COLOR_HEX, "FF42D9FF", "FFFF4FA3")
     fun gpsAccuracyLimit(context: Context): Float =

@@ -6,6 +6,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.speech.RecognizerIntent
+import android.speech.RecognitionListener
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -69,6 +73,7 @@ import com.openkayak.app.tracking.AthleteProfileStore
 import com.openkayak.app.tracking.OfflineMapStore
 import java.io.File
 import java.util.Locale
+import java.text.Normalizer
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -151,6 +156,88 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     var mapPackStatus by remember { mutableStateOf(OfflineMapStore.status(context)) }
     var savedBuoys by remember { mutableStateOf(BuoyStore.all(context)) }
     var pendingReview by remember { mutableStateOf(SessionReviewStore.pending(context)) }
+    var voiceStatus by remember { mutableStateOf("") }
+    var activeRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
+    val speechEngine = remember(context) {
+        lateinit var engine: TextToSpeech
+        engine = TextToSpeech(context) { status -> if (status == TextToSpeech.SUCCESS) engine.language = Locale("es", "ES") }
+        engine
+    }
+    DisposableEffect(speechEngine) {
+        onDispose {
+            runCatching { activeRecognizer?.cancel(); activeRecognizer?.destroy() }
+            speechEngine.stop()
+            speechEngine.shutdown()
+        }
+    }
+    fun speak(text: String) {
+        voiceStatus = text
+        speechEngine.language = Locale("es", "ES")
+        speechEngine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "openkayak-voice")
+    }
+    fun handleVoiceCommand(raw: String) {
+        val command = Normalizer.normalize(raw.lowercase(Locale.ROOT), Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
+        val current = TrackStore.snapshot(context)
+        when {
+            "distancia" in command -> speak("Llevas %.2f kilómetros.".format(Locale("es", "ES"), current.distanceM / 1000.0))
+            "velocidad" in command || "a cuanto voy" in command || "voy a cuanto" in command -> {
+                val value = AppSettingsStore.speedValue(context, current.speedKmh)
+                speak("Tu velocidad actual es %.1f %s.".format(Locale("es", "ES"), value, AppSettingsStore.speedUnitLabel(context)))
+            }
+            "tiempo" in command || "cuanto llevo" in command || "duracion" in command -> speak("Llevas ${formatDuration(current.elapsedMs)}.")
+            "marca una vuelta" in command || "marca vuelta" in command || "marca un giro" in command -> {
+                if (!current.active || current.paused) speak("Necesitas una sesión activa y en marcha para marcar una vuelta.")
+                else if (BuoyStore.saveCurrent(context, true)) { savedBuoys = BuoyStore.all(context); speak("Vuelta marcada con la posición GPS actual.") }
+                else speak("Todavía no tengo una posición GPS para marcar la vuelta.")
+            }
+            "termina el entrenamiento" in command || "finaliza el entrenamiento" in command || "terminar entrenamiento" in command || "termina la sesion" in command -> {
+                if (current.active) { showFinishConfirm = true; speak("¿Quieres terminar el entrenamiento? Confírmalo en la pantalla del reloj.") }
+                else speak("No hay ningún entrenamiento activo.")
+            }
+            else -> speak("No he entendido el comando. Puedes preguntar por distancia, velocidad o tiempo, marcar una vuelta o pedir terminar el entrenamiento.")
+        }
+    }
+    fun startVoiceCapture() {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) { speak("El reconocimiento de voz no está disponible en este reloj."); return }
+        runCatching {
+            val recognizer = if (android.os.Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context))
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
+            activeRecognizer = recognizer
+            voiceStatus = "Escuchando…"
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                private fun release() { if (activeRecognizer === recognizer) activeRecognizer = null; runCatching { recognizer.destroy() } }
+                override fun onReadyForSpeech(params: Bundle?) { voiceStatus = "Te escucho…" }
+                override fun onBeginningOfSpeech() { voiceStatus = "Reconociendo voz…" }
+                override fun onRmsChanged(rmsdB: Float) = Unit
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onEndOfSpeech() { voiceStatus = "Procesando…" }
+                override fun onError(error: Int) {
+                    release()
+                    speak(if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) "No he reconocido el comando. Pulsa el botón e inténtalo de nuevo." else "No se ha podido reconocer la voz. Comprueba el permiso de micrófono y el idioma español.")
+                }
+                override fun onResults(results: Bundle?) {
+                    val phrase = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    release()
+                    if (phrase.isNullOrBlank()) speak("No he entendido nada. Inténtalo de nuevo.") else handleVoiceCommand(phrase)
+                }
+                override fun onPartialResults(partialResults: Bundle?) = Unit
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+            recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            })
+        }.onFailure { activeRecognizer = null; speak("No se ha podido iniciar el micrófono.") }
+    }
+    val microphonePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startVoiceCapture() else speak("OpenKayak necesita permiso de micrófono para los comandos de voz.")
+    }
+    fun activateVoiceAssistant() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startVoiceCapture()
+        else microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
 
     val healthLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract()
@@ -263,7 +350,9 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                     onPauseResume = {
                         sendServiceAction(context, if (snapshot.paused) TrackService.ACTION_RESUME else TrackService.ACTION_PAUSE)
                     },
-                    onFinish = { showFinishConfirm = true }
+                    onFinish = { showFinishConfirm = true },
+                    onVoice = { activateVoiceAssistant() },
+                    voiceStatus = voiceStatus
                 )
                 1 -> RoutePage(snapshot, if (snapshot.active) TrackStore.recentTrack(context) else CircuitStore.points(context).ifEmpty { TrackStore.recentTrack(context) }, savedBuoys, isAmbient)
                 2 -> PulsePage(ble, isAmbient,
@@ -450,7 +539,9 @@ private fun DashboardPage(
     ambient: Boolean,
     onStart: () -> Unit,
     onPauseResume: () -> Unit,
-    onFinish: () -> Unit
+    onFinish: () -> Unit,
+    onVoice: () -> Unit,
+    voiceStatus: String
 ) {
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
         if (!ambient) {
@@ -471,7 +562,8 @@ private fun DashboardPage(
             fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(7.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
-            MetricTile("VELOCIDAD", String.format(Locale.getDefault(), "%.1f", s.speedKmh), "km/h", Mint, Modifier.weight(1f), ambient)
+            val context = LocalContext.current
+            MetricTile("VELOCIDAD", String.format(Locale.getDefault(), "%.1f", AppSettingsStore.speedValue(context, s.speedKmh)), AppSettingsStore.speedUnitLabel(context), Mint, Modifier.weight(1f), ambient)
             MetricTile("PULSO", if (ble.isFresh) ble.bpm.toString() else "--", "lpm", Pink, Modifier.weight(1f), ambient)
             MetricTile("RITMO/KM", pacePerKm(s.elapsedMs, s.distanceM), "min/km", Ice, Modifier.weight(1f), ambient)
         }
@@ -494,6 +586,9 @@ private fun DashboardPage(
                     ActionPill(if (s.paused) "REANUDAR" else "PAUSA", Panel2, Color.White, onPauseResume, Modifier.weight(1f))
                     ActionPill("FINALIZAR", Color(0xFF4B2428), Pink, onFinish, Modifier.weight(1f))
                 }
+                Spacer(Modifier.height(5.dp))
+                ActionPill("🎙 HABLAR CON OPENKAYAK", Panel2, Ice, onVoice, Modifier.fillMaxWidth())
+                if (voiceStatus.isNotBlank()) { Spacer(Modifier.height(3.dp)); Text(voiceStatus, color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center, maxLines = 2) }
             }
         }
     }
@@ -623,6 +718,7 @@ private fun BuoysPage(
 
 @Composable
 private fun AmbientDashboard(s: TrackSnapshot, ble: BleHrState, points: List<GeoSample>, buoys: List<SavedBuoy>, ambientTick: Int) {
+    val context = LocalContext.current
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text(formatDuration(s.elapsedMs), color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
         Text(if (s.active && !s.paused) "PIRAGÜISMO EN CURSO" else "CIRCUITO GUARDADO", color = Color(0xFF8D9DA8), fontSize = 7.sp, fontWeight = FontWeight.Bold)
@@ -645,7 +741,7 @@ private fun AmbientDashboard(s: TrackSnapshot, ble: BleHrState, points: List<Geo
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             MetricTile("FC", if (ble.isFresh) ble.bpm.toString() else "--", "lpm", Pink, Modifier.weight(1f), true)
             MetricTile("DISTANCIA", String.format(Locale.US, "%.2f", s.distanceM / 1000.0), "km", Ice, Modifier.weight(1f), true)
-            MetricTile("VELOCIDAD", String.format(Locale.US, "%.1f", s.speedKmh), "km/h", Mint, Modifier.weight(1f), true)
+            MetricTile("VELOCIDAD", String.format(Locale.US, "%.1f", AppSettingsStore.speedValue(context, s.speedKmh)), AppSettingsStore.speedUnitLabel(context), Mint, Modifier.weight(1f), true)
         }
         Text("AOD · actualización solicitada cada segundo · " + s.gpsStatus, color = Color.DarkGray, fontSize = 6.sp)
     }
@@ -699,6 +795,7 @@ private fun SettingsPage(
     var weightText by remember { mutableStateOf(String.format(Locale.US, "%.1f", AthleteProfileStore.weightKg(context))) }
     var ageText by remember { mutableStateOf(AthleteProfileStore.ageYears(context).toString()) }
     var heightText by remember { mutableStateOf(AthleteProfileStore.heightCm(context).toString()) }
+    var speedUnit by remember { mutableStateOf(AppSettingsStore.speedUnit(context)) }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
         Text("AJUSTES Y DATOS", color = if (isAmbient) Color.LightGray else Mint, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(7.dp))
@@ -720,6 +817,15 @@ private fun SettingsPage(
                     BasicTextField(value = heightText, onValueChange = { heightText = it.filter(Char::isDigit).take(3) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp), modifier = Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(8.dp)).padding(7.dp))
                 }
             }
+            Text("UNIDADES DE VELOCIDAD", color = Ice, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf("km/h", "mph", "m/s").forEach { unit ->
+                    ActionPill(unit, if (speedUnit == unit) Mint else Panel2, if (speedUnit == unit) Night else Color.White, {
+                        AppSettingsStore.setSpeedUnit(context, unit); speedUnit = unit
+                    }, Modifier.weight(1f))
+                }
+            }
+            Spacer(Modifier.height(5.dp))
             ActionPill("GUARDAR PERFIL", Panel2, Ice, {
                 val weight = weightText.replace(',', '.').toDoubleOrNull()
                 val age = ageText.toIntOrNull()
@@ -746,7 +852,7 @@ private fun SettingsPage(
         }
         Spacer(Modifier.height(8.dp))
         Text("AOD: negro puro, cifras de alto contraste y refresco reducido. «SALIR AOD» solicita despertar la pantalla; el sistema puede exigir un toque para reactivarla.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
-        Text("Versión 2.3 · Wear OS 5 · mapa interactivo", color = if (isAmbient) Color.DarkGray else Quiet,
+        Text("Versión 2.5 · asistente de voz · unidades de velocidad", color = if (isAmbient) Color.DarkGray else Quiet,
             fontSize = 7.sp, textAlign = TextAlign.Center)
     }
 }
