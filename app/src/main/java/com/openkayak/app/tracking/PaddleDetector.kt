@@ -8,8 +8,8 @@ import kotlin.math.sqrt
  * false positives. The threshold must be calibrated on the actual kayak.
  */
 class PaddleDetector(
-    private val threshold: Float = 2.15f,
-    private val refractoryMs: Long = 900L
+    private val threshold: Float = 1.2f,
+    private val refractoryMs: Long = 300L
 ) {
     private var baseline = 0f
     private var previousResidual = 0f
