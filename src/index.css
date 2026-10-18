@@ -33,3 +33,27 @@
 .dark-tiles {
   filter: brightness(0.85) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
 }
+
+/* Wear OS 5 Voice Wake: Pure green glowing border (solo el borde, verde puro) */
+@keyframes green-border-pulse {
+  0%, 100% {
+    box-shadow: 0 0 18px #76F4D0, inset 0 0 10px rgba(118, 244, 208, 0.5);
+    border-color: #76F4D0;
+  }
+  50% {
+    box-shadow: 0 0 32px #00FF88, inset 0 0 18px rgba(0, 255, 136, 0.8);
+    border-color: #00FF88;
+  }
+}
+
+.wearos-green-border {
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  border: 3.5px solid #76F4D0;
+  animation: green-border-pulse 1.6s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 30;
+}
+
+

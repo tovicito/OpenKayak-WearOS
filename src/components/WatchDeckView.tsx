@@ -8,9 +8,11 @@ import {
   SessionSummary,
 } from '../types/openkayak';
 import { MapView } from './MapView';
+import { VoiceAiOverlay } from './VoiceAiOverlay';
 import { StorageService } from '../services/storage';
 import { GpxExporter } from '../services/gpxExporter';
 import { RouteAnalyzer } from '../services/routeAnalyzer';
+import { OsmdroidTileStore } from '../services/osmdroidTileStore';
 
 interface WatchDeckViewProps {
   snapshot: TrackSnapshot;
@@ -65,11 +67,21 @@ export const WatchDeckView: React.FC<WatchDeckViewProps> = ({
   const [age, setAge] = useState(StorageService.getAthleteProfile().ageYears.toString());
   const [sessions, setSessions] = useState<SessionSummary[]>(StorageService.getWorkouts());
   const [settingsStatus, setSettingsStatus] = useState<string>('Health Connect: listo (emulado)');
-  const [mapPackStatus, setMapPackStatus] = useState<string>(
-    'Caché online activa (hasta 512 teselas) · MBTiles disponible'
+  const [cachedTilesCount, setCachedTilesCount] = useState<number>(() =>
+    OsmdroidTileStore.getCachedCount()
   );
+  const [mapPackStatus, setMapPackStatus] = useState<string>(
+    'Caché osmdroid Wear OS activa (hasta 512 teselas) · MBTiles disponible'
+  );
+  const [isVoiceWakeActive, setIsVoiceWakeActive] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return OsmdroidTileStore.subscribe((count) => {
+      setCachedTilesCount(count);
+    });
+  }, []);
 
   useEffect(() => {
     setSessions(StorageService.getWorkouts());
@@ -156,19 +168,23 @@ export const WatchDeckView: React.FC<WatchDeckViewProps> = ({
         </button>
       </div>
 
-      {/* Circular Watch Frame (representing Xiaomi Watch 2 Pro on kayak deck) */}
-      <div
-        className={`relative w-[340px] h-[340px] sm:w-[380px] sm:h-[380px] rounded-full border-8 shadow-2xl transition-all duration-300 flex items-center justify-center overflow-hidden ${
-          isAmbient
-            ? 'bg-black border-[#1a1a1a] shadow-black'
-            : 'bg-[#05090D] border-[#18232d] shadow-[#000000]/80'
-        }`}
-        style={{
-          boxShadow: isAmbient
-            ? '0 0 40px rgba(0,0,0,0.9)'
-            : '0 0 50px rgba(118,244,208,0.06), inset 0 0 25px rgba(0,0,0,0.8)',
-        }}
-      >
+      {/* Watch Wrapper with Pure Green Glowing Border (solo el borde, verde puro) when "hola reloj" is heard */}
+      <div className="relative flex items-center justify-center">
+        {isVoiceWakeActive && !isAmbient && <div className="wearos-green-border" />}
+
+        {/* Circular Watch Frame (representing Xiaomi Watch 2 Pro on kayak deck) */}
+        <div
+          className={`relative w-[340px] h-[340px] sm:w-[380px] sm:h-[380px] rounded-full border-8 shadow-2xl transition-all duration-300 flex items-center justify-center overflow-hidden z-10 ${
+            isAmbient
+              ? 'bg-black border-[#1a1a1a] shadow-black'
+              : 'bg-[#05090D] border-[#18232d] shadow-[#000000]/80'
+          }`}
+          style={{
+            boxShadow: isAmbient
+              ? '0 0 40px rgba(0,0,0,0.9)'
+              : '0 0 50px rgba(118,244,208,0.06), inset 0 0 25px rgba(0,0,0,0.8)',
+          }}
+        >
         {/* Decorative Watch Bezel Indices */}
         <div className="absolute inset-1 rounded-full pointer-events-none border border-white/5" />
         <div className="absolute top-1 left-1/2 -translate-x-1/2 w-1.5 h-1 bg-white/20 rounded-full pointer-events-none" />
@@ -401,6 +417,9 @@ export const WatchDeckView: React.FC<WatchDeckViewProps> = ({
                     <div className="text-[#8D9DA8] text-[7px] leading-tight text-center mt-1">
                       Cian: recorrido · Rosa: boyas · Naranja: U-turns
                     </div>
+                    <div className="text-[#76F4D0] text-[7px] font-bold text-center mt-0.5">
+                      osmdroid: {cachedTilesCount} teselas guardadas en Wear OS
+                    </div>
                   </div>
                 )}
 
@@ -615,6 +634,9 @@ export const WatchDeckView: React.FC<WatchDeckViewProps> = ({
                         className="hidden"
                       />
                     </div>
+                    <span className="text-[#76F4D0] text-[7px] font-bold block max-w-[240px]">
+                      osmdroid: {cachedTilesCount} / 512 teselas offline en Wear OS
+                    </span>
                     <span className="text-[#8D9DA8] text-[6px] truncate max-w-[240px]">
                       {mapPackStatus}
                     </span>
@@ -827,7 +849,21 @@ export const WatchDeckView: React.FC<WatchDeckViewProps> = ({
             </div>
           </div>
         )}
+
+        {/* Offline Voice AI Chat Overlay (Escucha "hola reloj", Borde colorinchis, Di lo que quieras) */}
+        {!isAmbient && (
+          <VoiceAiOverlay
+            snapshot={snapshot}
+            ble={ble}
+            onStartSession={onStartSession}
+            onPauseResumeSession={onPauseResumeSession}
+            onFinishSession={onFinishSession}
+            onSaveBuoy={onSaveBuoy}
+            onWakeActiveChange={setIsVoiceWakeActive}
+          />
+        )}
       </div>
     </div>
+  </div>
   );
 };

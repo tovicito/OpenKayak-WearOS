@@ -1,6 +1,29 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import { GeoSample, SavedBuoy } from '../types/openkayak';
+import { OsmdroidTileStore } from '../services/osmdroidTileStore';
+
+// Custom Osmdroid Leaflet TileLayer that caches all viewed tiles into Wear OS storage
+const OsmdroidTileLayer = L.TileLayer.extend({
+  createTile: function (coords: L.Coords, done: L.DoneCallback) {
+    const tile = document.createElement('img');
+    tile.alt = '';
+    tile.setAttribute('role', 'presentation');
+
+    const url = (this as any).getTileUrl(coords);
+    OsmdroidTileStore.fetchAndCacheTile(url)
+      .then((src) => {
+        tile.src = src;
+        done(undefined, tile);
+      })
+      .catch(() => {
+        tile.src = url;
+        done(undefined, tile);
+      });
+
+    return tile;
+  },
+});
 
 interface MapViewProps {
   points?: GeoSample[];
@@ -56,15 +79,15 @@ export const MapView: React.FC<MapViewProps> = ({
 
     mapInstanceRef.current = map;
 
-    // OpenStreetMap dark styled tile layer (CartoDB Dark Matter or OSM with dark CSS filter)
-    const tileLayer = L.tileLayer(
+    // osmdroid Tile Layer caching into Wear OS storage
+    const tileLayer = new (OsmdroidTileLayer as any)(
       'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
       {
         maxZoom: 19,
         subdomains: 'abcd',
         attribution: ambient
           ? ''
-          : '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          : '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> osmdroid WearOS cache',
       }
     );
     tileLayer.addTo(map);
