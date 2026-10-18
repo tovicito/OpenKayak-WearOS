@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #05090D;
+    color: #ffffff;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+/* Custom scrollbar for dark panels */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0d151c;
+}
+::-webkit-scrollbar-thumb {
+  background: #233442;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #395267;
+}
+
+/* Leaflet dark theme customizations */
+.leaflet-container {
+  background: #05090D !important;
+  font-family: inherit;
+}
+.dark-tiles {
+  filter: brightness(0.85) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}

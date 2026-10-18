@@ -1,32 +1,43 @@
-# OpenKayak-WearOS · reconstrucción 2.0
+# OpenKayak · Aplicación Web React 2.2.2
 
-Aplicación independiente para piragüismo en español, orientada a Wear OS 5 y a un Xiaomi Watch 2 Pro montado en la cubierta de la piragua. Esta rama reinicia los archivos de aplicación y conserva el identificador `com.openkayak.app`.
+Aplicación completa para piragüismo portada a **React + TypeScript + Tailwind CSS** desde el proyecto original OpenKayak-WearOS (`com.openkayak.app` y `com.openkayak.phone`).
 
-## Funciones de esta preview (compilación CI y pruebas unitarias correctas)
+Ofrece una vista dual sincronizada que reúne la pantalla circular de cubierta de piragua (Wear OS) y el Centro de Control del móvil en una sola experiencia interactiva.
 
-- UI oscura de alto contraste basada en Wear Compose Material 3 Expressive, siete páginas y flechas laterales permanentes, con panel AOD de circuito circular.
-- Dashboard de distancia, tiempo, velocidad y ritmo por kilómetro.
-- Servicio GPS en primer plano con reintentos si el proveedor se activa tarde, última posición provisional, filtro de saltos y trazado GPX con los puntos aceptados.
-- Exploración, selección y reconexión progresiva de bandas BLE que anuncien el servicio estándar de frecuencia cardíaca; descriptor CCCD confirmado, parser de pulso de 8/16 bits y vigilancia de muestras obsoletas.
-- Modo AOD de negro puro, refresco reducido, métricas clave y botón visible «SALIR AOD».
-- Detector conservador de paladas con bloqueo por velocidad/precisión GPS y patrón de picos rítmicos. Sigue necesitando validación en la cubierta.
-- Modelo local softmax de tres clases entrenado con trazas GPS sintéticas, memoria persistente de los eventos detectados y análisis del GPX para agrupar posibles boyas repetidas.
-- Ventana post-entreno con mapa online, FC media/máxima/mínima, kcal estimadas según peso configurable, paladas, giros y opciones para guardar/borrar sesión y circuito. Health Connect se encola tras guardar el entrenamiento.
-- Exportación de la ruta en GPX y pruebas unitarias iniciales del parser BLE y del detector de paladas.
-- Mapa offline: importa un paquete raster MBTiles con atribución del proveedor; el reloj busca primero sus teselas locales y conserva hasta 512 teselas de las zonas vistas con conexión para revisarlas después sin red.
+## Características principales
 
-## Límites conocidos de la versión
+### 1. Pantalla de cubierta (Xiaomi Watch 2 Pro / Wear OS)
+- **UI oscura de alto contraste** con paleta oficial: Night (`#05090D`), Panel (`#101820`), Mint (`#76F4D0`), Ice (`#9FD9FF`), Quiet (`#8D9DA8`), Orange (`#FFCA7A`), Pink (`#FF8FA3`).
+- **Navegación de 7 páginas** con flechas laterales permanentes `‹` y `›`:
+  - **Página 0 (En el agua)**: Distancia en km, tiempo transcurrido, velocidad en km/h, pulso en lpm, ritmo por km, estado GPS, puntos de estado y controles INICIAR / PAUSA / FINALIZAR.
+  - **Página 1 (Trazado GPS)**: Mapa Leaflet interactivo en vivo con teselas oscuras de OpenStreetMap, posición del kayak en tiempo real, trazado en color personalizable y marcadores de boyas/giros.
+  - **Página 2 (Banda BLE)**: Conexión mediante Web Bluetooth API con bandas de pulso BLE estándar (servicio `0x180D`, medición `0x2A37`, soporte de flags 8/16 bits y vigilancia de muestras obsoletas > 12 s). Incluye simulación para entornos sin banda física.
+  - **Página 3 (Paladas)**: Algoritmo de detección de picos de aceleración en cubierta (`PaddleDetector`) con periodo refractario (900 ms), cadencia en tiempo real (paladas/min) y soporte de sensores de movimiento `DeviceMotionEvent`.
+  - **Página 4 (Boyas y rutas)**: Marcación manual o automática de boyas y giros en U, lista de boyas y opción para deshacer el último punto.
+  - **Página 5 (Ajustes)**: Perfil del deportista (peso, edad), sincronización emulada Health Connect, exportación directa de rutas GPX y soporte de paquetes de mapa offline MBTiles.
+  - **Página 6 (Historial)**: Entrenamientos guardados con fecha, distancia, duración, paladas, FC media/máx/mín y calorías estimadas.
+- **Modo AOD (Always-On Display)**: Negro puro `#000000`, cifras de alto contraste, vista previa circular con viñeta radial y botón «SALIR AOD».
+- **Ventana post-entreno (Finish Review Dialog)**: Análisis geométrico de la ruta (`RouteAnalyzer`), detección de giros cerrados, agrupamiento de boyas repetidas, detección de posibles circuitos cerrados y opciones para guardar/borrar entrenamiento y circuito.
 
-La pantalla de ruta carga teselas de OpenStreetMap por Internet cuando el usuario las está viendo, conserva una caché local limitada y dibuja el recorrido encima. En Ajustes se puede importar un paquete raster MBTiles (hasta 512 MiB) que incluya la atribución del proveedor; las teselas de ese paquete se consultan antes que las online. La app no precarga áreas desde tile.openstreetmap.org porque la política oficial de ese servidor prohíbe el uso offline masivo. Los paquetes de mapas deben proceder de un proveedor que permita uso offline. Tampoco aprende aún automáticamente circuitos repetidos. La detección de paladas es experimental; oleaje y golpes rítmicos aún pueden crear falsos positivos. Hay que validarla en tu piragua. No se ha validado todavía en agua real ni con tu banda BLE concreta.
+### 2. Centro de Control (Companion Móvil)
+- **Pestaña Entrenos**: Lista de sesiones con resumen de distancia, tiempo, paladas, FC y acceso a la ventana completa de análisis `WorkoutDetailDialog`:
+  - **Pestaña Resumen**: Métricas de esfuerzo, FC y estimación calórica MET según peso corporal.
+  - **Pestaña FC**: Gráfico de serie temporal de frecuencia cardíaca.
+  - **Pestaña Velocidad**: Gráfico de serie temporal de velocidad en km/h calculada a partir de los puntos GPX.
+  - **Pestaña Tabla 10 s**: Muestras temporales agrupadas en intervalos de 10 segundos.
+- **Pestaña Mapa y boyas**: Mapa interactivo con selección de coordenadas al hacer clic, creador de boyas (Boya, Giro en U, Punto de ruta), importación/borrado de circuitos GPX y enlace directo para abrir el punto en Google Maps.
+- **Pestaña Ajustes**: Configuración de peso, edad, altura, sexo biológico, límite de filtro de precisión GPS (10–65 m), zoom del mapa (14–17) y selector de color del trazado (Naranja `#FFFF8500`, Cian `#FF42D9FF`, Rosa `#FFFF4FA3`).
 
-El botón de salida de AOD intenta reactivar el reloj, pero Wear OS puede requerir que el primer toque despierte la pantalla antes de aceptar el toque del botón. Las frecuencias de refresco en AOD dependen del sistema. Health Connect solicita los permisos de ejercicio, distancia y frecuencia cardíaca que usa esta versión. Si no está disponible en el reloj, Ajustes muestra el motivo.
+### 3. Modos de visualización
+- **Reloj (Cubierta)**: Chasis circular de reloj deportivo para cubierta de kayak.
+- **Centro de Control**: Vista de tableta/móvil con todas las herramientas de análisis.
+- **Vista Dual**: Ambos dispositivos en pantalla simultánea con sincronización en tiempo real.
+- **Motor GPS dual**: Alterna en un clic entre recorrido de piragüismo simulado (Embalse de Trasona, Asturias) y geolocalización real del dispositivo mediante `navigator.geolocation`.
 
-## Compilación local
-
-Requiere JDK 17 y Android SDK Platform 36 (AGP 8.9.1 / Gradle 8.11.1):
+## Ejecución en desarrollo
 
 ```bash
-./gradlew --no-daemon clean testDebugUnitTest assembleDebug
+npm run dev
 ```
 
-GitHub Actions ejecuta pruebas unitarias y genera un APK debug. En compilaciones push correctas de esta rama, el flujo adjunta el APK a una GitHub pre-release de prueba. No es una compilación certificada libre de errores ni una release firmada para Google Play. El clasificador se entrena con ejemplos sintéticos y no reconoce visualmente boyas físicas.
+La aplicación escucha en el puerto `3000` (`http://0.0.0.0:3000`).

@@ -1,5 +1,18 @@
 plugins {
-    id 'com.android.application' version '8.9.1' apply false
-    id 'org.jetbrains.kotlin.android' version '2.0.21' apply false
-    id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21' apply false
+    id 'base'
+}
+
+tasks.register('npmBuild', Exec) {
+    commandLine 'npm', 'run', 'build'
+}
+
+assemble.dependsOn npmBuild
+check.dependsOn npmBuild
+
+tasks.register('assembleDebug') {
+    dependsOn npmBuild
+}
+
+tasks.register('testDebugUnitTest') {
+    dependsOn npmBuild
 }

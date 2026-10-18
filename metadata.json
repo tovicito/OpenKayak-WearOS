@@ -1,0 +1,11 @@
+{
+  "name": "OpenKayak",
+  "description": "Aplicación de piragüismo para seguimiento en vivo en cubierta, GPS, banda de pulso BLE, detección de paladas, giros y boyas, y centro de control.",
+  "permissions": [
+    "geolocation",
+    "bluetooth"
+  ],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
