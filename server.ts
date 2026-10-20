@@ -301,6 +301,8 @@ Da recomendaciones biomecánicas de cadencia, ritmo de carrera y recuperación c
       message: err.message,
     });
   }
+});
+
 // Endpoint to parse natural language workout description into structured intervals
 app.post('/api/gemini/parse-workout', async (req, res) => {
   const { promptText, availableCircuits = [] } = req.body;
