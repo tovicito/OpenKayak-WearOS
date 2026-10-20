@@ -7,6 +7,8 @@ import {
   GeoSample,
   PulseSample,
   TrackSnapshot,
+  CircuitDefinition,
+  StructuredWorkout,
 } from '../types/openkayak';
 
 const STORAGE_KEYS = {
@@ -14,6 +16,9 @@ const STORAGE_KEYS = {
   BUOYS: 'openkayak_buoys',
   HISTORY: 'openkayak_history',
   CIRCUIT: 'openkayak_circuit',
+  CIRCUITS_LIST: 'openkayak_circuits_list',
+  WORKOUT_TEMPLATES: 'openkayak_workout_templates',
+  ACTIVE_WORKOUT_ID: 'openkayak_active_workout_id',
   PENDING_REVIEW: 'openkayak_pending_review',
   PROFILE: 'openkayak_profile',
   SETTINGS: 'openkayak_settings',
@@ -30,6 +35,235 @@ export const TRASONA_CENTER = {
   latitude: 43.5585,
   longitude: -5.9102,
 };
+
+export const DEFAULT_CIRCUITS: CircuitDefinition[] = [
+  {
+    id: 'memorial',
+    name: 'Memorial',
+    startPoint: { latitude: 43.5585, longitude: -5.9102 },
+    radiusM: 25,
+    lapDistanceEstimatedM: 1850,
+    colorHex: '#A855F7',
+    isDeletable: true,
+    waypoints: [
+      { id: 'm1', order: 1, latitude: 43.5585, longitude: -5.9102, label: 'Meta / Salida (Boya 1)' },
+      { id: 'm2', order: 2, latitude: 43.5620, longitude: -5.9080, label: 'Boya Giro Norte (Boya 2)' },
+      { id: 'm3', order: 3, latitude: 43.5550, longitude: -5.9130, label: 'Boya Giro Sur (Boya 3)' },
+    ],
+    routeLine: [
+      [43.5585, -5.9102],
+      [43.5620, -5.9080],
+      [43.5550, -5.9130],
+      [43.5585, -5.9102],
+    ],
+    createdAt: Date.now() - 86400000 * 3,
+  },
+  {
+    id: 'trasona-1000',
+    name: 'Trasona 1000m Ida y Vuelta',
+    startPoint: { latitude: 43.5585, longitude: -5.9102 },
+    radiusM: 25,
+    lapDistanceEstimatedM: 2000,
+    colorHex: '#A855F7',
+    isDeletable: true,
+    waypoints: [
+      { id: 't1', order: 1, latitude: 43.5585, longitude: -5.9102, label: 'Salida 0m (Boya 1)' },
+      { id: 't2', order: 2, latitude: 43.5675, longitude: -5.9102, label: 'Viraje 1000m (Boya 2)' },
+    ],
+    routeLine: [
+      [43.5585, -5.9102],
+      [43.5675, -5.9102],
+      [43.5585, -5.9102],
+    ],
+    createdAt: Date.now() - 86400000 * 2,
+  },
+];
+
+export const DEFAULT_STRUCTURED_WORKOUTS: StructuredWorkout[] = [
+  {
+    id: 'workout-arturito-memorial',
+    name: 'Paleo Foto + 3 Vueltas Memorial + Pausa 8km/h + 100m (IA)',
+    description: '20 minutos a paleo foto (técnica y lento), 3 vueltas completas al Memorial, pausa indefinida hasta alcanzar 8 km/h y serie final de 100 metros.',
+    repeatCycles: 1,
+    totalEstimatedDurationSec: 1200 + 1500 + 120 + 30,
+    phases: [
+      {
+        id: 'phase-1-paleofoto',
+        name: 'Paleo foto (técnica y lento)',
+        type: 'TECHNIQUE',
+        triggerType: 'TIME',
+        durationSec: 1200, // 20 minutes
+        targetSpm: 48,
+        targetSpeedKmh: 6.0,
+        notes: 'Buscar apoyo firme en agua y torsión de tronco',
+      },
+      {
+        id: 'phase-2-vueltas-memorial',
+        name: '3 vueltas al circuito Memorial',
+        type: 'LAP_SERIES',
+        triggerType: 'LAPS',
+        targetLaps: 3,
+        targetCircuitName: 'Memorial',
+        targetSpm: 72,
+        targetSpeedKmh: 10.5,
+        notes: 'Mantener ritmo constante en cada vuelta',
+      },
+      {
+        id: 'phase-3-pausa-velocidad',
+        name: 'Pausa indefinida hasta superar 8 km/h',
+        type: 'PAUSE',
+        triggerType: 'SPEED_TRIGGER',
+        triggerSpeedKmh: 8.0,
+        leadTimeSec: 5,
+        notes: 'Pausa o paleo muy lento. Al acelerar y superar 8 km/h (contando 5s previos) se dispara la serie final',
+      },
+      {
+        id: 'phase-4-sprint-100m',
+        name: 'Serie final de 100m',
+        type: 'DISTANCE_SERIES',
+        triggerType: 'DISTANCE',
+        targetDistanceM: 100,
+        targetSpm: 105,
+        targetSpeedKmh: 14.0,
+        notes: '¡Sprint a tope hasta completar los 100 metros!',
+      },
+    ],
+  },
+  {
+    id: 'fartlek-piraguismo',
+    name: 'Fartlek Piragüismo (40m suave + Sprints)',
+    description: '40 minutos de ritmo suave base, seguido de 5 repeticiones de sprint de 20s y 1 min de recuperación.',
+    repeatCycles: 5,
+    totalEstimatedDurationSec: 2400 + 5 * (20 + 60) + 300,
+    phases: [
+      {
+        id: 'phase-warmup',
+        name: 'Ritmo suave de fondo',
+        type: 'STEADY',
+        triggerType: 'TIME',
+        durationSec: 2400,
+        targetSpm: 68,
+        targetSpeedKmh: 9.5,
+        notes: 'Paleo fluido y constante',
+      },
+      {
+        id: 'phase-sprint',
+        name: 'Sprint a máxima intensidad',
+        type: 'SPRINT',
+        triggerType: 'TIME',
+        durationSec: 20,
+        targetSpm: 110,
+        targetSpeedKmh: 14.5,
+        notes: '¡Máxima frecuencia y potencia de palada!',
+      },
+      {
+        id: 'phase-recovery',
+        name: 'Recuperación activa suave',
+        type: 'RECOVERY',
+        triggerType: 'TIME',
+        durationSec: 60,
+        targetSpm: 60,
+        targetSpeedKmh: 7.0,
+        notes: 'Soltar hombros y respiración profunda',
+      },
+      {
+        id: 'phase-cooldown',
+        name: 'Vuelta a la calma / Enfriamiento',
+        type: 'COOLDOWN',
+        triggerType: 'TIME',
+        durationSec: 300,
+        targetSpm: 55,
+        targetSpeedKmh: 6.5,
+        notes: 'Deslizar el kayak suavemente',
+      },
+    ],
+  },
+  {
+    id: 'series-velocidad-200',
+    name: 'Series Velocidad (20s sprint / 1m recup x 6)',
+    description: 'Calentamiento de 10 min seguido de 6 repeticiones de 20 segundos a tope y 1 minuto de recuperación.',
+    repeatCycles: 6,
+    totalEstimatedDurationSec: 600 + 6 * (20 + 60) + 300,
+    phases: [
+      {
+        id: 'phase-v-warmup',
+        name: 'Calentamiento progresivo',
+        type: 'WARMUP',
+        triggerType: 'TIME',
+        durationSec: 600,
+        targetSpm: 68,
+        targetSpeedKmh: 9.0,
+        notes: 'Movilidad articular y paleo suave',
+      },
+      {
+        id: 'phase-v-sprint',
+        name: 'Sprint explosivo 20s',
+        type: 'SPRINT',
+        triggerType: 'TIME',
+        durationSec: 20,
+        targetSpm: 115,
+        targetSpeedKmh: 15.0,
+        notes: 'Ataque limpio y torsión de tronco',
+      },
+      {
+        id: 'phase-v-recovery',
+        name: 'Recuperación 1 minuto',
+        type: 'RECOVERY',
+        triggerType: 'TIME',
+        durationSec: 60,
+        targetSpm: 55,
+        targetSpeedKmh: 6.5,
+        notes: 'Recuperar aire y deslizar',
+      },
+      {
+        id: 'phase-v-cooldown',
+        name: 'Enfriamiento',
+        type: 'COOLDOWN',
+        triggerType: 'TIME',
+        durationSec: 300,
+        targetSpm: 55,
+        targetSpeedKmh: 6.5,
+        notes: 'Paleo regenerativo final',
+      },
+    ],
+  },
+  {
+    id: 'test-1000m-trasona',
+    name: 'Test 1000m Trasona',
+    description: 'Prueba cronometrada de 1000m en pista recta con calentamiento y descalentamiento.',
+    repeatCycles: 1,
+    totalEstimatedDurationSec: 900 + 240 + 600,
+    phases: [
+      {
+        id: 'phase-1000-warmup',
+        name: 'Calentamiento completo',
+        type: 'WARMUP',
+        triggerType: 'TIME',
+        durationSec: 900,
+        targetSpm: 70,
+        targetSpeedKmh: 9.8,
+      },
+      {
+        id: 'phase-1000-sprint',
+        name: 'Test 1000m a ritmo máximo',
+        type: 'SPRINT',
+        triggerType: 'DISTANCE',
+        targetDistanceM: 1000,
+        targetSpm: 88,
+        targetSpeedKmh: 12.8,
+      },
+      {
+        id: 'phase-1000-cooldown',
+        name: 'Soltar y enfriar',
+        type: 'COOLDOWN',
+        triggerType: 'TIME',
+        durationSec: 600,
+        targetSpm: 55,
+        targetSpeedKmh: 6.5,
+      },
+    ],
+  },
+];
 
 // Generate realistic starter track at Trasona
 function generateInitialTrasonaTrack(): { points: GeoSample[]; gpx: string } {
@@ -124,6 +358,11 @@ export class StorageService {
           ageYears: profile.ageYears,
           heightCm: profile.heightCm,
           biologicalSex: profile.biologicalSex,
+          speedUnit: parsed.speedUnit || 'kmh',
+          autoLapEnabled: parsed.autoLapEnabled !== undefined ? parsed.autoLapEnabled : true,
+          autoLapRadiusM: parsed.autoLapRadiusM || 25,
+          activeCircuitId: parsed.activeCircuitId || 'memorial',
+          alertMode: parsed.alertMode || 'VOICE_AND_VIBRATION',
         };
       }
     } catch (_) {}
@@ -135,6 +374,11 @@ export class StorageService {
       mapZoom: 16,
       gpsAccuracyLimitM: 35,
       routeColorHex: DEFAULT_ROUTE_COLOR_ORANGE,
+      speedUnit: 'kmh',
+      autoLapEnabled: true,
+      autoLapRadiusM: 25,
+      activeCircuitId: 'memorial',
+      alertMode: 'VOICE_AND_VIBRATION',
     };
   }
 
@@ -341,5 +585,97 @@ export class StorageService {
 
   public static clearHeartRateSamples(): void {
     localStorage.removeItem(STORAGE_KEYS.HR_SAMPLES);
+  }
+
+  // --- Circuits Management (Auto-Lap) ---
+  public static getCircuits(): CircuitDefinition[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.CIRCUITS_LIST);
+      if (data !== null) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (_) {}
+    // Seed initial default circuits only if never saved
+    this.saveCircuits(DEFAULT_CIRCUITS);
+    return DEFAULT_CIRCUITS;
+  }
+
+  public static saveCircuits(circuits: CircuitDefinition[]): void {
+    localStorage.setItem(STORAGE_KEYS.CIRCUITS_LIST, JSON.stringify(circuits));
+  }
+
+  public static saveCircuitDefinition(circuit: CircuitDefinition): void {
+    const list = this.getCircuits();
+    const idx = list.findIndex((c) => c.id === circuit.id);
+    if (idx >= 0) {
+      list[idx] = circuit;
+    } else {
+      list.push(circuit);
+    }
+    this.saveCircuits(list);
+  }
+
+  public static deleteCircuitDefinition(id: string): void {
+    const list = this.getCircuits().filter((c) => c.id !== id);
+    this.saveCircuits(list);
+  }
+
+  public static clearAllCircuits(): void {
+    this.saveCircuits([]);
+  }
+
+  public static resetDefaultCircuits(): void {
+    this.saveCircuits(DEFAULT_CIRCUITS);
+  }
+
+  // --- Structured Workouts Management ---
+  public static getStructuredWorkouts(): StructuredWorkout[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.WORKOUT_TEMPLATES);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (_) {}
+    // Seed default structured workouts
+    this.saveStructuredWorkouts(DEFAULT_STRUCTURED_WORKOUTS);
+    return DEFAULT_STRUCTURED_WORKOUTS;
+  }
+
+  public static saveStructuredWorkouts(workouts: StructuredWorkout[]): void {
+    localStorage.setItem(STORAGE_KEYS.WORKOUT_TEMPLATES, JSON.stringify(workouts));
+  }
+
+  public static saveStructuredWorkout(workout: StructuredWorkout): void {
+    const list = this.getStructuredWorkouts();
+    const idx = list.findIndex((w) => w.id === workout.id);
+    if (idx >= 0) {
+      list[idx] = workout;
+    } else {
+      list.push(workout);
+    }
+    this.saveStructuredWorkouts(list);
+  }
+
+  public static deleteStructuredWorkout(id: string): void {
+    const list = this.getStructuredWorkouts().filter((w) => w.id !== id);
+    this.saveStructuredWorkouts(list);
+  }
+
+  public static getActiveWorkoutId(): string | null {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.ACTIVE_WORKOUT_ID);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  public static setActiveWorkoutId(id: string | null): void {
+    if (id) {
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_WORKOUT_ID, id);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.ACTIVE_WORKOUT_ID);
+    }
   }
 }

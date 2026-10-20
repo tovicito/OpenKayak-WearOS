@@ -8,6 +8,12 @@ import {
   PulseSample,
   SessionSummary,
   AppSettings,
+  CircuitDefinition,
+  StructuredWorkout,
+  ActiveWorkoutState,
+  Lap,
+  AlertMode,
+  SpeedUnit,
 } from './types/openkayak';
 import { WatchDeckView } from './components/WatchDeckView';
 import { PhoneControlCenter } from './components/PhoneControlCenter';
@@ -17,13 +23,21 @@ import { RouteAnalyzer } from './services/routeAnalyzer';
 import { BleHeartRateManager } from './services/heartRateBle';
 import { StorageService, TRASONA_CENTER } from './services/storage';
 import { GpxExporter } from './services/gpxExporter';
+import { soundEffects } from './services/soundEffects';
+import { LapDetector } from './services/lapDetector';
+import { WorkoutIntervalEngine } from './services/workoutIntervalEngine';
 
 export const App: React.FC = () => {
   // View mode: 'watch' | 'phone' | 'dual'
   const [viewMode, setViewMode] = useState<'watch' | 'phone' | 'dual'>('dual');
   const [gpsSimMode, setGpsSimMode] = useState<boolean>(true);
 
-  // Core tracking snapshot matching TrackStore
+  // Settings
+  const [settings, setSettings] = useState<AppSettings>(() =>
+    StorageService.getAppSettings()
+  );
+
+  // Core tracking snapshot
   const [snapshot, setSnapshot] = useState<TrackSnapshot>({
     active: false,
     paused: false,
@@ -58,6 +72,28 @@ export const App: React.FC = () => {
   // Services
   const paddleDetectorRef = useRef<PaddleDetector>(new PaddleDetector());
   const turnModelRef = useRef<TurnAiModel>(new TurnAiModel());
+  const lapDetectorRef = useRef<LapDetector>(
+    new LapDetector({
+      radiusM: settings.autoLapRadiusM || 25,
+      maxAccuracyM: settings.gpsAccuracyLimitM || 15,
+    })
+  );
+  const workoutEngineRef = useRef<WorkoutIntervalEngine>(
+    new WorkoutIntervalEngine(settings.alertMode || 'VOICE_AND_VIBRATION')
+  );
+
+  // Circuits & Structured Workouts
+  const [circuits, setCircuits] = useState<CircuitDefinition[]>(() =>
+    StorageService.getCircuits()
+  );
+  const [structuredWorkouts, setStructuredWorkouts] = useState<StructuredWorkout[]>(() =>
+    StorageService.getStructuredWorkouts()
+  );
+  const [activeWorkoutId, setActiveWorkoutId] = useState<string | null>(() =>
+    StorageService.getActiveWorkoutId() || 'fartlek-piraguismo'
+  );
+  const [activeWorkoutState, setActiveWorkoutState] = useState<ActiveWorkoutState | null>(null);
+  const [laps, setLaps] = useState<Lap[]>([]);
 
   // Data collections
   const [recentPoints, setRecentPoints] = useState<GeoSample[]>(() =>
@@ -73,9 +109,6 @@ export const App: React.FC = () => {
     StorageService.getWorkouts()
   );
   const [circuit, setCircuit] = useState(() => StorageService.getCircuit());
-  const [settings, setSettings] = useState<AppSettings>(() =>
-    StorageService.getAppSettings()
-  );
 
   // Simulation / GPS timers
   const simStepRef = useRef(0);
@@ -83,6 +116,12 @@ export const App: React.FC = () => {
   const gpsWatchIdRef = useRef<number | null>(null);
   const gpxPointsBufferRef = useRef<GeoSample[]>([]);
   const strokeTimesRef = useRef<number[]>([]);
+  const wasGpsLockedRef = useRef<boolean>(false);
+
+  // Keep workout engine alert mode in sync with settings
+  useEffect(() => {
+    workoutEngineRef.current.setAlertMode(settings.alertMode || 'VOICE_AND_VIBRATION');
+  }, [settings.alertMode]);
 
   // Initialize BLE Manager
   useEffect(() => {
@@ -138,6 +177,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (snapshot.active && !snapshot.paused) {
       sessionTimerRef.current = setInterval(() => {
+        // Advance structured workout interval engine with live speed and distance
+        workoutEngineRef.current.tick1s(snapshot.speedKmh, snapshot.distanceM);
+        setActiveWorkoutState(workoutEngineRef.current.getState());
+
         setSnapshot((prev) => {
           const nextElapsed = prev.elapsedMs + 1000;
           const now = Date.now();
@@ -276,6 +319,14 @@ export const App: React.FC = () => {
       return;
     }
 
+    // Play confirmation tone when GPS locks (accuracy transitions to <= 15m)
+    if (accuracy <= 15 && !wasGpsLockedRef.current) {
+      wasGpsLockedRef.current = true;
+      soundEffects.playGpsConnectedTone();
+    } else if (accuracy > 15) {
+      wasGpsLockedRef.current = false;
+    }
+
     setSnapshot((prev) => {
       let deltaM = 0;
       if (prev.latitude && prev.longitude) {
@@ -285,7 +336,7 @@ export const App: React.FC = () => {
         );
       }
 
-      // Ignore teleport jump > 14 m/s
+      // Ignore teleport jump > 25m
       if (deltaM > 25) {
         return { ...prev, gpsStatus: 'Salto GPS descartado' };
       }
@@ -303,6 +354,41 @@ export const App: React.FC = () => {
       gpxPointsBufferRef.current.push(sample);
       StorageService.appendRecentPoint(sample);
 
+      // Auto-Lap Detection Engine (only if enabled in settings)
+      if (settings.autoLapEnabled !== false) {
+        // Automatic Circuit Proximity Lock: If near a saved circuit start gate, lock onto it
+        if (circuits.length > 0) {
+          const nearbyCirc = circuits.find((c) => {
+            const d = calculateDistance(
+              { latitude: c.startPoint.latitude, longitude: c.startPoint.longitude },
+              { latitude: lat, longitude: lon }
+            );
+            return d <= (c.radiusM || 30);
+          });
+          if (nearbyCirc && nearbyCirc.id !== settings.activeCircuitId) {
+            handleUpdateSettings({ activeCircuitId: nearbyCirc.id });
+            lapDetectorRef.current.setStartGate(nearbyCirc.startPoint, nearbyCirc.name);
+          }
+        }
+
+        const completedLap = lapDetectorRef.current.onGpsSample(
+          sample,
+          totalDist,
+          prev.strokes,
+          speedKmh,
+          timestamp
+        );
+
+        if (completedLap) {
+          setLaps(lapDetectorRef.current.getLaps());
+          // Notify interval engine if current phase is lap-based
+          workoutEngineRef.current.notifyLapCompleted(completedLap, lapDetectorRef.current.getCircuitName());
+          setActiveWorkoutState(workoutEngineRef.current.getState());
+          // Subtle audio chime for lap completion
+          soundEffects.playGpsConnectedTone();
+        }
+      }
+
       // Feed to TurnAiModel
       const origin = gpxPointsBufferRef.current[0] || sample;
       const turnPrediction = turnModelRef.current.onGpsPoint(
@@ -316,7 +402,6 @@ export const App: React.FC = () => {
 
       if (turnPrediction && turnPrediction.type !== 'CORRECTION') {
         const buoyType = turnPrediction.type === 'UTURN' ? 'UTURN' : 'BUOY';
-        // Auto-save inferred buoy
         StorageService.addBuoy(
           turnPrediction.latitude,
           turnPrediction.longitude,
@@ -339,7 +424,7 @@ export const App: React.FC = () => {
     setRecentPoints(StorageService.getRecentPoints());
   };
 
-  // Start Session
+  // Start Session with confirmation tone and structured workout/lap init
   const handleStartSession = () => {
     if (pendingReview) {
       alert('Guarda o borra el resumen anterior antes de iniciar otro entrenamiento.');
@@ -353,8 +438,28 @@ export const App: React.FC = () => {
     paddleDetectorRef.current.reset();
     turnModelRef.current.reset();
     simStepRef.current = 0;
+    wasGpsLockedRef.current = false;
+    setLaps([]);
 
     const startAt = Date.now();
+
+    // Start auto-lap detector with active circuit
+    const activeCirc = circuits.find((c) => c.id === settings.activeCircuitId) || circuits[0] || null;
+    lapDetectorRef.current.start(activeCirc, undefined, startAt);
+
+    // Start structured workout if selected
+    const activeWorkout = structuredWorkouts.find((w) => w.id === activeWorkoutId);
+    if (activeWorkout) {
+      workoutEngineRef.current.start(activeWorkout);
+      setActiveWorkoutState(workoutEngineRef.current.getState());
+    } else {
+      workoutEngineRef.current.stop();
+      setActiveWorkoutState(null);
+    }
+
+    // Play start audio chime
+    soundEffects.playWorkoutStartTone();
+
     setSnapshot({
       active: true,
       paused: false,
@@ -376,10 +481,18 @@ export const App: React.FC = () => {
 
   // Pause / Resume
   const handlePauseResume = () => {
-    setSnapshot((s) => ({ ...s, paused: !s.paused }));
+    setSnapshot((s) => {
+      const nextPaused = !s.paused;
+      if (nextPaused) {
+        workoutEngineRef.current.pause();
+      } else {
+        workoutEngineRef.current.resume();
+      }
+      return { ...s, paused: nextPaused };
+    });
   };
 
-  // Finish Session -> Analyze GPX & show Review
+  // Finish Session -> Tone, Lap aggregation & Review
   const handleFinishSession = () => {
     const endAt = Date.now();
     const currentPoints = [...gpxPointsBufferRef.current];
@@ -398,6 +511,14 @@ export const App: React.FC = () => {
     const minutes = snapshot.elapsedMs / 60000;
     const calories = Math.round((6.0 * 3.5 * settings.weightKg) / 200.0 * minutes);
 
+    const completedLaps = lapDetectorRef.current.getLaps();
+    const activeWorkout = structuredWorkouts.find((w) => w.id === activeWorkoutId);
+
+    // Play finish tone
+    soundEffects.playWorkoutFinishTone();
+    workoutEngineRef.current.stop();
+    setActiveWorkoutState(null);
+
     const review: FinishedSession = {
       startAt: snapshot.startAt,
       endAt,
@@ -413,6 +534,8 @@ export const App: React.FC = () => {
       turns: analysis.turns,
       repeatedBuoyCount: analysis.repeatedBuoyCount,
       isCircuit: analysis.isCircuit,
+      laps: completedLaps,
+      structuredWorkoutName: activeWorkout?.name,
     };
 
     StorageService.setPendingReview(review);
@@ -424,6 +547,20 @@ export const App: React.FC = () => {
       paused: false,
       endAt,
     }));
+  };
+
+  // Trigger lap manually (from watch button, phone, or voice command)
+  const handleTriggerLap = () => {
+    if (!snapshot.active) return;
+    const manualLap = lapDetectorRef.current.triggerManualLap(
+      Date.now(),
+      snapshot.distanceM,
+      snapshot.strokes
+    );
+    setLaps(lapDetectorRef.current.getLaps());
+    workoutEngineRef.current.notifyLapCompleted(manualLap, lapDetectorRef.current.getCircuitName());
+    setActiveWorkoutState(workoutEngineRef.current.getState());
+    soundEffects.playGpsConnectedTone();
   };
 
   // Finish review actions
@@ -449,6 +586,8 @@ export const App: React.FC = () => {
       calories: review.calories,
       gpxContent: gpxText,
       heartRateSamples: StorageService.getHeartRateSamples(),
+      laps: review.laps,
+      structuredWorkoutName: review.structuredWorkoutName,
     };
 
     StorageService.recordWorkout(summary);
@@ -464,7 +603,6 @@ export const App: React.FC = () => {
     );
     setCircuit(StorageService.getCircuit());
 
-    // Save detected turns to buoy store
     review.turns.forEach((t) => {
       StorageService.addBuoy(t.latitude, t.longitude, t.turnType);
     });
@@ -493,7 +631,7 @@ export const App: React.FC = () => {
     hrManagerRef.current?.scanAndConnect();
   };
 
-  const handleConnectBle = (address: string) => {
+  const handleConnectBle = () => {
     hrManagerRef.current?.startSimulatedConnection();
   };
 
@@ -505,7 +643,7 @@ export const App: React.FC = () => {
   const handleSaveBuoy = (isTurn: boolean) => {
     if (snapshot.latitude && snapshot.longitude) {
       const type = isTurn ? 'BUOY' : 'PUNTO DE RUTA';
-      const b = StorageService.addBuoy(snapshot.latitude, snapshot.longitude, type);
+      StorageService.addBuoy(snapshot.latitude, snapshot.longitude, type);
       setSavedBuoys(StorageService.getBuoys());
     } else {
       alert('Espera a tener una posición GPS fijada.');
@@ -549,6 +687,46 @@ export const App: React.FC = () => {
     setSettings(StorageService.getAppSettings());
   };
 
+  // Circuit definitions management
+  const handleSaveCircuitDef = (newCirc: CircuitDefinition) => {
+    StorageService.saveCircuitDefinition(newCirc);
+    setCircuits(StorageService.getCircuits());
+    handleUpdateSettings({ activeCircuitId: newCirc.id });
+  };
+
+  const handleDeleteCircuitDef = (id: string) => {
+    StorageService.deleteCircuitDefinition(id);
+    const updated = StorageService.getCircuits();
+    setCircuits(updated);
+    if (settings.activeCircuitId === id) {
+      handleUpdateSettings({ activeCircuitId: updated[0]?.id || '' });
+    }
+  };
+
+  // Structured Workouts management
+  const handleSaveStructuredWorkout = (w: StructuredWorkout) => {
+    StorageService.saveStructuredWorkout(w);
+    setStructuredWorkouts(StorageService.getStructuredWorkouts());
+    handleSelectActiveWorkout(w.id);
+  };
+
+  const handleDeleteStructuredWorkout = (id: string) => {
+    StorageService.deleteStructuredWorkout(id);
+    const updated = StorageService.getStructuredWorkouts();
+    setStructuredWorkouts(updated);
+    if (activeWorkoutId === id) {
+      handleSelectActiveWorkout(updated[0]?.id || null);
+    }
+  };
+
+  const handleSelectActiveWorkout = (id: string | null) => {
+    setActiveWorkoutId(id);
+    StorageService.setActiveWorkoutId(id);
+  };
+
+  const activeCircuit =
+    circuits.find((c) => c.id === settings.activeCircuitId) || circuits[0] || null;
+
   return (
     <div className="min-h-screen bg-[#05090D] text-white flex flex-col font-sans">
       {/* Top Navigation & Applet Controls */}
@@ -562,11 +740,11 @@ export const App: React.FC = () => {
               <h1 className="text-white font-extrabold text-sm sm:text-base tracking-wider flex items-center gap-2">
                 OPENKAYAK
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#172738] text-[#76F4D0] border border-[#76F4D0]/30">
-                  Wear OS & Móvil
+                  Wear OS 5 & Móvil
                 </span>
               </h1>
               <p className="text-[#8D9DA8] text-[10px] hidden sm:block">
-                Piragüismo en vivo en cubierta · Xiaomi Watch 2 Pro & Centro de Control
+                Piragüismo · Vueltas automáticas, Fases por voz & Coach IA Gemini
               </p>
             </div>
           </div>
@@ -575,7 +753,7 @@ export const App: React.FC = () => {
           <div className="flex items-center gap-1 bg-[#101b28] p-1 rounded-2xl border border-[#203144]">
             <button
               onClick={() => setViewMode('watch')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'watch'
                   ? 'bg-[#76F4D0] text-[#05090D] shadow-sm'
                   : 'text-[#8D9DA8] hover:text-white'
@@ -585,17 +763,17 @@ export const App: React.FC = () => {
             </button>
             <button
               onClick={() => setViewMode('phone')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'phone'
                   ? 'bg-[#70C5F0] text-[#05090D] shadow-sm'
                   : 'text-[#8D9DA8] hover:text-white'
               }`}
             >
-              Centro de Control
+              Centro de Control Móvil
             </button>
             <button
               onClick={() => setViewMode('dual')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 viewMode === 'dual'
                   ? 'bg-[#FF8FA3] text-[#05090D] shadow-sm'
                   : 'text-[#8D9DA8] hover:text-white'
@@ -609,7 +787,7 @@ export const App: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setGpsSimMode(!gpsSimMode)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 cursor-pointer ${
                 gpsSimMode
                   ? 'bg-[#17283c] text-[#9FD9FF] border-[#29425e]'
                   : 'bg-[#291e14] text-[#FFCA7A] border-[#5e4329]'
@@ -633,10 +811,10 @@ export const App: React.FC = () => {
           <div className="w-full flex flex-col items-center">
             <div className="text-center mb-2">
               <h2 className="text-[#76F4D0] font-bold text-xs tracking-wider uppercase">
-                Xiaomi Watch 2 Pro · Montado en la cubierta
+                Xiaomi Watch 2 Pro · Montado en la cubierta (Wear OS 5)
               </h2>
               <p className="text-[#8D9DA8] text-[11px]">
-                Interfaz Wear Compose Expressive con 7 páginas y flechas laterales ‹ y ›
+                8 pantallas Wear OS Expressive: Vueltas automáticas, Fases por voz, GPS, Pulso, Paladas y Ajustes
               </p>
             </div>
             <WatchDeckView
@@ -645,6 +823,19 @@ export const App: React.FC = () => {
               recentPoints={recentPoints}
               savedBuoys={savedBuoys}
               routeColorHex={settings.routeColorHex}
+              speedUnit={settings.speedUnit}
+              laps={laps}
+              onTriggerLap={handleTriggerLap}
+              activeWorkoutState={activeWorkoutState}
+              activeCircuit={activeCircuit}
+              circuits={circuits}
+              onSelectCircuit={(id) => handleUpdateSettings({ activeCircuitId: id })}
+              structuredWorkouts={structuredWorkouts}
+              activeWorkoutId={activeWorkoutId}
+              onSelectStructuredWorkout={handleSelectActiveWorkout}
+              alertMode={settings.alertMode}
+              onSetAlertMode={(mode) => handleUpdateSettings({ alertMode: mode })}
+              onSetSpeedUnit={(unit: SpeedUnit) => handleUpdateSettings({ speedUnit: unit })}
               onStartSession={handleStartSession}
               onPauseResumeSession={handlePauseResume}
               onFinishSession={handleFinishSession}
@@ -670,6 +861,14 @@ export const App: React.FC = () => {
               workouts={workouts}
               buoys={savedBuoys}
               currentCircuit={circuit}
+              circuits={circuits}
+              onSaveCircuitDefinition={handleSaveCircuitDef}
+              onDeleteCircuitDefinition={handleDeleteCircuitDef}
+              structuredWorkouts={structuredWorkouts}
+              onSaveStructuredWorkout={handleSaveStructuredWorkout}
+              onDeleteStructuredWorkout={handleDeleteStructuredWorkout}
+              activeWorkoutId={activeWorkoutId}
+              onSelectActiveWorkout={handleSelectActiveWorkout}
               settings={settings}
               onUpdateSettings={handleUpdateSettings}
               onAddBuoy={handlePhoneAddBuoy}
@@ -683,6 +882,8 @@ export const App: React.FC = () => {
               onTriggerSync={() => {
                 setWorkouts(StorageService.getWorkouts());
                 setSavedBuoys(StorageService.getBuoys());
+                setCircuits(StorageService.getCircuits());
+                setStructuredWorkouts(StorageService.getStructuredWorkouts());
               }}
             />
           </div>
@@ -694,10 +895,10 @@ export const App: React.FC = () => {
             <div className="xl:col-span-5 flex flex-col items-center bg-[#0c1825]/80 p-4 rounded-3xl border border-[#1b2b3c] shadow-xl">
               <div className="text-center mb-1">
                 <span className="text-[#76F4D0] font-bold text-xs tracking-wider uppercase block">
-                  PANTALLA DE CUBIERTA (RELOJ WEAR OS)
+                  PANTALLA DE CUBIERTA (RELOJ WEAR OS 5)
                 </span>
                 <span className="text-[#8D9DA8] text-[10px]">
-                  Toca ‹ y › para navegar entre las 7 pantallas o activa AOD
+                  Toca ‹ y › para navegar entre las 8 pantallas o activa AOD
                 </span>
               </div>
               <WatchDeckView
@@ -706,6 +907,19 @@ export const App: React.FC = () => {
                 recentPoints={recentPoints}
                 savedBuoys={savedBuoys}
                 routeColorHex={settings.routeColorHex}
+                speedUnit={settings.speedUnit}
+                laps={laps}
+                onTriggerLap={handleTriggerLap}
+                activeWorkoutState={activeWorkoutState}
+                activeCircuit={activeCircuit}
+                circuits={circuits}
+                onSelectCircuit={(id) => handleUpdateSettings({ activeCircuitId: id })}
+                structuredWorkouts={structuredWorkouts}
+                activeWorkoutId={activeWorkoutId}
+                onSelectStructuredWorkout={handleSelectActiveWorkout}
+                alertMode={settings.alertMode}
+                onSetAlertMode={(mode) => handleUpdateSettings({ alertMode: mode })}
+                onSetSpeedUnit={(unit: SpeedUnit) => handleUpdateSettings({ speedUnit: unit })}
                 onStartSession={handleStartSession}
                 onPauseResumeSession={handlePauseResume}
                 onFinishSession={handleFinishSession}
@@ -730,6 +944,14 @@ export const App: React.FC = () => {
                 workouts={workouts}
                 buoys={savedBuoys}
                 currentCircuit={circuit}
+                circuits={circuits}
+                onSaveCircuitDefinition={handleSaveCircuitDef}
+                onDeleteCircuitDefinition={handleDeleteCircuitDef}
+                structuredWorkouts={structuredWorkouts}
+                onSaveStructuredWorkout={handleSaveStructuredWorkout}
+                onDeleteStructuredWorkout={handleDeleteStructuredWorkout}
+                activeWorkoutId={activeWorkoutId}
+                onSelectActiveWorkout={handleSelectActiveWorkout}
                 settings={settings}
                 onUpdateSettings={handleUpdateSettings}
                 onAddBuoy={handlePhoneAddBuoy}
@@ -743,6 +965,8 @@ export const App: React.FC = () => {
                 onTriggerSync={() => {
                   setWorkouts(StorageService.getWorkouts());
                   setSavedBuoys(StorageService.getBuoys());
+                  setCircuits(StorageService.getCircuits());
+                  setStructuredWorkouts(StorageService.getStructuredWorkouts());
                 }}
               />
             </div>

@@ -25,6 +25,14 @@ const OsmdroidTileLayer = L.TileLayer.extend({
   },
 });
 
+export interface WaypointMarker {
+  id: string;
+  order: number;
+  latitude: number;
+  longitude: number;
+  label?: string;
+}
+
 interface MapViewProps {
   points?: GeoSample[];
   buoys?: SavedBuoy[];
@@ -33,6 +41,9 @@ interface MapViewProps {
   followPosition?: boolean;
   zoom?: number;
   routeColor?: string;
+  circuitRouteLine?: Array<[number, number]>;
+  circuitWaypoints?: WaypointMarker[];
+  circuitColor?: string;
   onPickCoordinate?: (coords: { latitude: number; longitude: number }) => void;
   pickedCoordinate?: { latitude: number; longitude: number } | null;
   interactive?: boolean;
@@ -47,6 +58,9 @@ export const MapView: React.FC<MapViewProps> = ({
   followPosition = true,
   zoom = 16,
   routeColor = '#76F4D0',
+  circuitRouteLine,
+  circuitWaypoints = [],
+  circuitColor = '#A855F7',
   onPickCoordinate,
   pickedCoordinate,
   interactive = true,
@@ -55,7 +69,9 @@ export const MapView: React.FC<MapViewProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const trackLayerRef = useRef<L.Polyline | null>(null);
+  const circuitLayerRef = useRef<L.Polyline | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const circuitMarkersRef = useRef<L.LayerGroup | null>(null);
   const boatMarkerRef = useRef<L.Marker | null>(null);
   const pickedMarkerRef = useRef<L.Marker | null>(null);
 
@@ -63,8 +79,16 @@ export const MapView: React.FC<MapViewProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    const initialLat = currentLocation?.latitude || points[0]?.latitude || 43.5585;
-    const initialLon = currentLocation?.longitude || points[0]?.longitude || -5.9102;
+    const initialLat =
+      currentLocation?.latitude ||
+      (circuitWaypoints.length > 0 ? circuitWaypoints[0].latitude : null) ||
+      points[0]?.latitude ||
+      43.5585;
+    const initialLon =
+      currentLocation?.longitude ||
+      (circuitWaypoints.length > 0 ? circuitWaypoints[0].longitude : null) ||
+      points[0]?.longitude ||
+      -5.9102;
 
     const map = L.map(mapContainerRef.current, {
       center: [initialLat, initialLon],
@@ -95,6 +119,9 @@ export const MapView: React.FC<MapViewProps> = ({
     const markersGroup = L.layerGroup().addTo(map);
     markersLayerRef.current = markersGroup;
 
+    const circuitGroup = L.layerGroup().addTo(map);
+    circuitMarkersRef.current = circuitGroup;
+
     if (onPickCoordinate) {
       map.on('click', (e: L.LeafletMouseEvent) => {
         onPickCoordinate({
@@ -123,7 +150,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   }, [currentLocation, followPosition]);
 
-  // Update Track Polyline
+  // Update Track Polyline (Athlete's recorded GPS track)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -139,7 +166,7 @@ export const MapView: React.FC<MapViewProps> = ({
         p.longitude,
       ]);
       const polyline = L.polyline(latlngs, {
-        color: routeColor,
+        color: ambient ? '#FFFFFF' : routeColor,
         weight: ambient ? 3 : 4,
         opacity: ambient ? 0.85 : 0.95,
         lineCap: 'round',
@@ -149,11 +176,85 @@ export const MapView: React.FC<MapViewProps> = ({
       trackLayerRef.current = polyline;
 
       // Fit bounds if no followPosition and we have points
-      if (!followPosition && points.length > 2) {
+      if (!followPosition && points.length > 2 && (!circuitRouteLine || circuitRouteLine.length === 0)) {
         map.fitBounds(polyline.getBounds(), { padding: [15, 15] });
       }
     }
-  }, [points, routeColor, ambient, followPosition]);
+  }, [points, routeColor, ambient, followPosition, circuitRouteLine]);
+
+  // Update Circuit Purple Line (Shortest path connecting buoy to buoy)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (circuitLayerRef.current) {
+      map.removeLayer(circuitLayerRef.current);
+      circuitLayerRef.current = null;
+    }
+
+    if (circuitRouteLine && circuitRouteLine.length > 1) {
+      const latlngs: L.LatLngExpression[] = circuitRouteLine.map((c) => [c[0], c[1]]);
+      const polyline = L.polyline(latlngs, {
+        color: ambient ? '#C084FC' : (circuitColor || '#A855F7'),
+        weight: ambient ? 3.5 : 4.5,
+        opacity: ambient ? 0.9 : 1.0,
+        dashArray: ambient ? '6, 6' : undefined,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(map);
+
+      circuitLayerRef.current = polyline;
+
+      // Auto-fit circuit if points array is small
+      if (!followPosition && points.length <= 2) {
+        map.fitBounds(polyline.getBounds(), { padding: [25, 25] });
+      }
+    }
+  }, [circuitRouteLine, circuitColor, ambient, followPosition, points.length]);
+
+  // Update Circuit Waypoints / Numbered Buoys (1, 2, 3...)
+  useEffect(() => {
+    const group = circuitMarkersRef.current;
+    if (!group) return;
+    group.clearLayers();
+
+    circuitWaypoints.forEach((wp) => {
+      const isStart = wp.order === 1;
+      const wpIcon = L.divIcon({
+        className: 'circuit-waypoint-marker',
+        html: `
+          <div style="
+            background: ${isStart ? '#A855F7' : '#140c20'};
+            border: 2px solid #C084FC;
+            color: ${isStart ? '#FFFFFF' : '#C084FC'};
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 900;
+            box-shadow: 0 0 10px rgba(168, 85, 247, 0.8);
+          ">
+            ${wp.order}
+          </div>
+        `,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      });
+
+      const marker = L.marker([wp.latitude, wp.longitude], { icon: wpIcon });
+      marker.bindPopup(`
+        <div style="background:#140c20; color:#fff; padding:6px; font-family:sans-serif; font-size:11px; border-radius:6px; border: 1px solid #A855F7;">
+          <b style="color:#C084FC;">${isStart ? '🏁 META / SALIDA (PUNTO 1)' : `BOYA / GIRO #${wp.order}`}</b><br/>
+          ${wp.label || ''}<br/>
+          ${wp.latitude.toFixed(5)}, ${wp.longitude.toFixed(5)}
+        </div>
+      `);
+      group.addLayer(marker);
+    });
+  }, [circuitWaypoints]);
 
   // Update Boat Position Marker
   useEffect(() => {
@@ -254,16 +355,17 @@ export const MapView: React.FC<MapViewProps> = ({
         className: 'picked-marker',
         html: `
           <div style="
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
-            border: 3px solid #FFFF8500;
-            background: #FF42D9;
-            box-shadow: 0 0 10px #FFFF8500;
+            border: 3px solid #C084FC;
+            background: #A855F7;
+            box-shadow: 0 0 12px #A855F7;
+            animation: pulse 1s infinite;
           "></div>
         `,
-        iconSize: [18, 18],
-        iconAnchor: [9, 9],
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
       });
 
       const marker = L.marker([pickedCoordinate.latitude, pickedCoordinate.longitude], {
@@ -279,7 +381,7 @@ export const MapView: React.FC<MapViewProps> = ({
       ref={mapContainerRef}
       className={`relative rounded-xl overflow-hidden z-0 ${className}`}
       style={{
-        filter: ambient ? 'grayscale(1) contrast(1.2)' : 'none',
+        filter: ambient ? 'grayscale(0.6) contrast(1.2)' : 'none',
       }}
     />
   );

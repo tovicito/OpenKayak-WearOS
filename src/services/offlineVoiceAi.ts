@@ -1,4 +1,4 @@
-import { TrackSnapshot, BleHrState } from '../types/openkayak';
+import { TrackSnapshot, BleHrState, ActiveWorkoutState, Lap } from '../types/openkayak';
 
 export type VoiceAiIntent =
   | 'QUERY_DISTANCE'
@@ -6,18 +6,21 @@ export type VoiceAiIntent =
   | 'QUERY_SPEED'
   | 'QUERY_HEART_RATE'
   | 'QUERY_STROKES'
+  | 'QUERY_WORKOUT_PHASE'
+  | 'QUERY_LAPS'
   | 'ACTION_START'
   | 'ACTION_PAUSE'
   | 'ACTION_RESUME'
   | 'ACTION_FINISH'
   | 'ACTION_MARK_BUOY'
+  | 'ACTION_TRIGGER_LAP'
   | 'GREETING'
   | 'UNKNOWN';
 
 export interface VoiceAiResult {
   intent: VoiceAiIntent;
   responseSpanish: string;
-  actionRequired?: 'start' | 'pause' | 'resume' | 'finish' | 'mark_buoy';
+  actionRequired?: 'start' | 'pause' | 'resume' | 'finish' | 'mark_buoy' | 'trigger_lap';
 }
 
 export class OfflineVoiceAi {
@@ -83,7 +86,9 @@ export class OfflineVoiceAi {
   public static processQuery(
     commandText: string,
     snapshot: TrackSnapshot,
-    ble: BleHrState
+    ble: BleHrState,
+    activeWorkoutState?: ActiveWorkoutState | null,
+    laps?: Lap[]
   ): VoiceAiResult {
     const text = this.normalize(commandText);
 
@@ -280,7 +285,7 @@ export class OfflineVoiceAi {
     // 10. Mark Buoy / Point Action
     if (
       text.includes('boya') ||
-      text.includes('marcar') ||
+      text.includes('marcar punto') ||
       text.includes('guardar punto') ||
       text.includes('marcar giro') ||
       text.includes('nueva boya')
@@ -290,6 +295,72 @@ export class OfflineVoiceAi {
         responseSpanish: 'Punto de boya registrado en sus coordenadas GPS.',
         actionRequired: 'mark_buoy',
       };
+    }
+
+    // 11. Structured Workout Phase queries ("¿Qué fase toca?", "¿Fase actual?", "¿Qué viene ahora?")
+    if (
+      text.includes('fase') ||
+      text.includes('intervalo') ||
+      text.includes('que toca') ||
+      text.includes('que viene') ||
+      text.includes('siguiente serie') ||
+      text.includes('sprint') ||
+      text.includes('recuperacion')
+    ) {
+      if (activeWorkoutState && !activeWorkoutState.isCompleted) {
+        let statusDetail = '';
+        if (activeWorkoutState.phaseRemainingSec !== undefined) {
+          const rem = activeWorkoutState.phaseRemainingSec;
+          const min = Math.floor(rem / 60);
+          const sec = rem % 60;
+          statusDetail = min > 0 ? `Quedan ${min} minutos y ${sec} segundos` : `Quedan ${sec} segundos`;
+        } else {
+          statusDetail = activeWorkoutState.phaseMetricDisplay || 'en progreso';
+        }
+
+        return {
+          intent: 'QUERY_WORKOUT_PHASE',
+          responseSpanish: `Fase actual: ${activeWorkoutState.currentPhaseName}, serie ${activeWorkoutState.currentCycle} de ${activeWorkoutState.totalCycles}. ${statusDetail}.`,
+        };
+      } else {
+        return {
+          intent: 'QUERY_WORKOUT_PHASE',
+          responseSpanish: 'No hay ningún entrenamiento por fases activo en este momento.',
+        };
+      }
+    }
+
+    // 12. Laps / Vueltas queries ("¿Cuántas vueltas llevo?", "¿Mejor vuelta?")
+    if (
+      text.includes('vuelta') ||
+      text.includes('vueltas') ||
+      text.includes('lap') ||
+      text.includes('circuito')
+    ) {
+      // Check if user is asking to trigger/mark a lap manually
+      if (text.includes('marcar') || text.includes('nueva') || text.includes('cerrar')) {
+        return {
+          intent: 'ACTION_TRIGGER_LAP',
+          responseSpanish: 'Registrando nueva vuelta en el circuito.',
+          actionRequired: 'trigger_lap',
+        };
+      }
+
+      if (laps && laps.length > 0) {
+        const best = laps.reduce((b, c) => (c.durationMs < b.durationMs ? c : b), laps[0]);
+        const bestMin = Math.floor(best.durationMs / 60000);
+        const bestSec = Math.round((best.durationMs % 60000) / 1000);
+        const bestTimeStr = bestMin > 0 ? `${bestMin}m ${bestSec}s` : `${bestSec}s`;
+        return {
+          intent: 'QUERY_LAPS',
+          responseSpanish: `Ha completado ${laps.length} ${laps.length === 1 ? 'vuelta' : 'vueltas'}. La mejor vuelta ha sido la número ${best.lapNumber} en ${bestTimeStr} a ${best.avgSpeedKmh.toFixed(1).replace('.', ',')} km/h.`,
+        };
+      } else {
+        return {
+          intent: 'QUERY_LAPS',
+          responseSpanish: 'Aún no ha completado ninguna vuelta al circuito en esta sesión.',
+        };
+      }
     }
 
     // 11. Greeting / Capabilities

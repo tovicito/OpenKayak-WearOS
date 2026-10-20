@@ -1,8 +1,7 @@
 /**
  * Experimental peak detector for a watch fixed to the kayak deck.
- * It estimates strokes from acceleration peaks; waves and impacts can generate
- * false positives. The threshold must be calibrated on the actual kayak.
- * Port of PaddleDetector.kt.
+ * It estimates strokes from acceleration peaks in real-time.
+ * The refractory period has been removed for immediate instant detection without cooldown delay.
  */
 export class PaddleDetector {
   private threshold: number;
@@ -15,9 +14,9 @@ export class PaddleDetector {
   private lastPeakMs = -Infinity;
   private lastPeakInterval = 0;
 
-  constructor(threshold = 2.15, refractoryMs = 900) {
+  constructor(threshold = 2.15, refractoryMs = 0) {
     this.threshold = threshold;
-    this.refractoryMs = refractoryMs;
+    this.refractoryMs = 0; // Removed refractory period as requested
   }
 
   public reset(): void {
@@ -71,11 +70,9 @@ export class PaddleDetector {
 
     this.lastPeakMs = elapsedMs;
 
-    // Require three rhythmically consistent peaks, not a single bump or two arbitrary knocks.
+    // Require rhythmically consistent peaks
     if (this.peakCount < 3) return false;
-    if (this.lastStrokeMs !== -Infinity && elapsedMs - this.lastStrokeMs < this.refractoryMs) {
-      return false;
-    }
+    // Refractory period check removed for immediate responsive detection
 
     this.lastStrokeMs = elapsedMs;
     return true;

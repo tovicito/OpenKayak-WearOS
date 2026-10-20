@@ -55,6 +55,8 @@ export interface FinishedSession {
   turns: SavedBuoy[];
   repeatedBuoyCount: number;
   isCircuit: boolean;
+  laps?: Lap[];
+  structuredWorkoutName?: string;
 }
 
 export interface SessionSummary {
@@ -70,6 +72,8 @@ export interface SessionSummary {
   calories: number;
   gpxContent?: string;
   heartRateSamples?: PulseSample[];
+  laps?: Lap[];
+  structuredWorkoutName?: string;
 }
 
 export interface AthleteProfile {
@@ -77,6 +81,108 @@ export interface AthleteProfile {
   ageYears: number;
   heightCm: number;
   biologicalSex: 'MALE' | 'FEMALE' | 'OTHER';
+}
+
+export type SpeedUnit = 'kmh' | 'ms' | 'knots' | 'pace_km' | 'pace_500m';
+export type AlertMode = 'VOICE_AND_VIBRATION' | 'VOICE_ONLY' | 'VIBRATION_ONLY' | 'MUTED';
+
+export interface Lap {
+  lapNumber: number;
+  startTimeMs: number;
+  endTimeMs: number;
+  durationMs: number;
+  distanceM: number;
+  avgSpeedKmh: number;
+  maxSpeedKmh: number;
+  strokes: number;
+  avgCadenceSpm: number;
+  isBestLap?: boolean;
+}
+
+export interface CircuitWaypoint {
+  id: string;
+  order: number;
+  latitude: number;
+  longitude: number;
+  label: string;
+}
+
+export interface CircuitDefinition {
+  id: string;
+  name: string;
+  startPoint: GeoSample;
+  radiusM: number;
+  lapDistanceEstimatedM?: number;
+  points?: GeoSample[];
+  waypoints?: CircuitWaypoint[];
+  routeLine?: Array<[number, number]>;
+  colorHex?: string;
+  isDeletable?: boolean;
+  createdAt: number;
+}
+
+export type WorkoutPhaseType =
+  | 'WARMUP'
+  | 'STEADY'
+  | 'SPRINT'
+  | 'RECOVERY'
+  | 'COOLDOWN'
+  | 'TECHNIQUE'
+  | 'PAUSE'
+  | 'DISTANCE_SERIES'
+  | 'LAP_SERIES';
+
+export type PhaseTriggerType = 'TIME' | 'LAPS' | 'SPEED_TRIGGER' | 'DISTANCE' | 'MANUAL';
+
+export interface WorkoutPhase {
+  id: string;
+  name: string;
+  type: WorkoutPhaseType;
+  triggerType: PhaseTriggerType;
+  durationSec?: number;
+  targetLaps?: number;
+  targetCircuitName?: string;
+  targetCircuitId?: string;
+  targetDistanceM?: number;
+  triggerSpeedKmh?: number;
+  leadTimeSec?: number; // e.g. 5 seconds before speed threshold reached
+  targetSpm?: number;
+  targetSpeedKmh?: number;
+  notes?: string;
+}
+
+export interface StructuredWorkout {
+  id: string;
+  name: string;
+  description: string;
+  phases: WorkoutPhase[];
+  repeatCycles: number;
+  totalEstimatedDurationSec: number;
+  createdAt?: number;
+}
+
+export interface ActiveWorkoutState {
+  workoutId: string;
+  workoutName: string;
+  currentPhaseIndex: number;
+  currentPhaseName: string;
+  currentPhaseType: WorkoutPhaseType;
+  triggerType: PhaseTriggerType;
+  phaseElapsedSec: number;
+  phaseDurationSec?: number;
+  phaseRemainingSec?: number;
+  phaseProgressPercent: number;
+  phaseMetricDisplay: string;
+  // Dynamic triggers tracking:
+  lapsCompletedInPhase?: number;
+  targetLapsInPhase?: number;
+  distanceCoveredInPhaseM?: number;
+  targetDistanceInPhaseM?: number;
+  waitingForSpeedKmh?: number;
+  speedTriggerArmed?: boolean;
+  currentCycle: number;
+  totalCycles: number;
+  isCompleted: boolean;
 }
 
 export interface AppSettings {
@@ -87,6 +193,11 @@ export interface AppSettings {
   mapZoom: number;
   gpsAccuracyLimitM: number;
   routeColorHex: string;
+  speedUnit: SpeedUnit;
+  autoLapEnabled: boolean;
+  autoLapRadiusM: number;
+  activeCircuitId?: string;
+  alertMode: AlertMode;
 }
 
 export type BlePhase = 'IDLE' | 'SCANNING' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
@@ -132,4 +243,6 @@ export interface PhoneWorkout {
   minBpm: number;
   calories: number;
   heartRateSamples: { timeMs: number; value: number }[];
+  laps?: Lap[];
+  structuredWorkoutName?: string;
 }
