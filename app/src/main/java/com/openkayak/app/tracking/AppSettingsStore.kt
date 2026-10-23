@@ -8,6 +8,7 @@ object AppSettingsStore {
     const val ROUTE_COLOR_KEY = "route_color_hex"
     const val DEFAULT_ROUTE_COLOR_HEX = "FFFF8500"
     private const val SPEED_UNIT_KEY = "speed_unit"
+    private const val WAKE_WORD_ENABLED_KEY = "wake_word_enabled"
     private val speedUnits = setOf("km/h", "mph", "m/s")
     fun speedUnit(context: Context): String =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(SPEED_UNIT_KEY, "km/h")
@@ -22,6 +23,11 @@ object AppSettingsStore {
         else -> speedKmh
     }
     fun speedUnitLabel(context: Context): String = speedUnit(context)
+    fun wakeWordEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(WAKE_WORD_ENABLED_KEY, false)
+    fun setWakeWordEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(WAKE_WORD_ENABLED_KEY, enabled).apply()
+    }
     private const val PREFS = PREFS_NAME
     private val routeColorPalette = setOf(DEFAULT_ROUTE_COLOR_HEX, "FF42D9FF", "FFFF4FA3")
     fun gpsAccuracyLimit(context: Context): Float =
