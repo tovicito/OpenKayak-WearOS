@@ -668,7 +668,7 @@ private fun StrokePage(s: TrackSnapshot, ambient: Boolean) {
         Spacer(Modifier.height(7.dp))
         MetricTile("RITMO ACTUAL", s.cadenceSpm.toString(), "paladas/min", Ice, Modifier.fillMaxWidth(), ambient)
         Spacer(Modifier.height(8.dp))
-        Text("El algoritmo analiza picos de aceleración con periodo refractario para reducir dobles conteos.", color = Color.White,
+        Text("El algoritmo valida picos y regularidad de la cadencia, sin periodo refractario adicional.", color = Color.White,
             fontSize = 9.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(5.dp))
         Text("Oleaje, golpes y vibración pueden crear falsos positivos. Hay que calibrarlo en tu piragua; no se ha validado en agua real.",
