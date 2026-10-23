@@ -42,15 +42,33 @@ jobs:
       - name: Install Android 36 platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Build web application from Main
+      - name: Install web dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Commit refreshed npm lockfile if needed
+        id: lockfile
         run: |
-          npm install --no-audit --no-fund
-          npm run build
+          if [[ "${GITHUB_REF_NAME}" != "integration/main-to-native-v2.6" ]] || git diff --quiet -- package-lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "chore(web): sync npm lockfile"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - name: Build web application from Main
+        if: steps.lockfile.outputs.changed != 'true'
+        run: npm run build
 
       - name: Build native APKs and run unit tests
+        if: steps.lockfile.outputs.changed != 'true'
         run: ./gradlew --no-daemon clean testDebugUnitTest :app:assembleDebug :phone:assembleDebug --stacktrace
 
       - name: Name real installable APKs
+        if: steps.lockfile.outputs.changed != 'true'
         run: |
           mkdir -p dist
           test -s app/build/outputs/apk/debug/app-debug.apk
@@ -61,6 +79,7 @@ jobs:
           file dist/*.apk
 
       - name: Upload APKs as build artifacts
+        if: steps.lockfile.outputs.changed != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openkayak-v2.6-apks
@@ -69,7 +88,7 @@ jobs:
           retention-days: 90
 
       - name: Publish v2.6 pre-release with both native APKs
-        if: success() && github.ref == 'refs/heads/integration/main-to-native-v2.6'
+        if: success() && github.ref == 'refs/heads/integration/main-to-native-v2.6' && steps.lockfile.outputs.changed != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.6
