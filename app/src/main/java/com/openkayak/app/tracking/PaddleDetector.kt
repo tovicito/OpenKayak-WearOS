@@ -9,11 +9,9 @@ import kotlin.math.sqrt
  */
 class PaddleDetector(
     private val threshold: Float = 1.2f,
-    private val refractoryMs: Long = 300L
 ) {
     private var baseline = 0f
     private var previousResidual = 0f
-    private var lastStrokeMs = Long.MIN_VALUE
     private var initialized = false
     private var peakCount = 0
     private var lastPeakMs = Long.MIN_VALUE
@@ -22,7 +20,6 @@ class PaddleDetector(
     fun reset() {
         baseline = 0f
         previousResidual = 0f
-        lastStrokeMs = Long.MIN_VALUE
         initialized = false
         peakCount = 0
         lastPeakMs = Long.MIN_VALUE
@@ -61,8 +58,6 @@ class PaddleDetector(
         lastPeakMs = elapsedMs
         // Require three rhythmically consistent peaks, not a single bump or two arbitrary knocks.
         if (peakCount < 3) return false
-        if (lastStrokeMs != Long.MIN_VALUE && elapsedMs - lastStrokeMs < refractoryMs) return false
-        lastStrokeMs = elapsedMs
         return true
     }
 }
