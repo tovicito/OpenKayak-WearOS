@@ -1,4 +1,4 @@
-name: OpenKayak v2.6 · integración Android + web
+name: OpenKayak v2.7 · AAB + APK · Wear OS + Android
 
 on:
   push:
@@ -59,54 +59,68 @@ jobs:
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
 
-      - name: Build web application from Main
+      - name: Build web application
         run: npm run build
 
-      - name: Build native APKs and run unit tests
-        run: ./gradlew --no-daemon clean testDebugUnitTest :app:assembleDebug :phone:assembleDebug --stacktrace
+      - name: Run Android unit tests and build AABs + debug APKs
+        run: ./gradlew --no-daemon clean testDebugUnitTest :app:bundleRelease :phone:bundleRelease :app:assembleDebug :phone:assembleDebug --stacktrace
 
-      - name: Name real installable APKs
+      - name: Collect and validate native packages
         run: |
           mkdir -p dist
+          test -s app/build/outputs/bundle/release/app-release.aab
+          test -s phone/build/outputs/bundle/release/phone-release.aab
           test -s app/build/outputs/apk/debug/app-debug.apk
           test -s phone/build/outputs/apk/debug/phone-debug.apk
-          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.6-WearOS.apk
-          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.6-Android.apk
-          sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
-          file dist/*.apk
 
-      - name: Upload APKs as build artifacts
+          cp app/build/outputs/bundle/release/app-release.aab dist/OpenKayak-v2.7-WearOS.aab
+          cp phone/build/outputs/bundle/release/phone-release.aab dist/OpenKayak-v2.7-Android.aab
+          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.7-WearOS-debug.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.7-Android-debug.apk
+
+          for package in dist/*.aab; do
+            unzip -t "$package"
+            unzip -l "$package" | grep -q 'base/manifest/AndroidManifest.xml'
+          done
+          for package in dist/*.apk; do
+            unzip -t "$package"
+            unzip -l "$package" | grep -q 'AndroidManifest.xml'
+            unzip -l "$package" | grep -q 'classes.dex'
+          done
+          sha256sum dist/*.aab dist/*.apk | tee dist/SHA256SUMS.txt
+          file dist/*.aab dist/*.apk
+
+      - name: Upload AABs and debug APKs as build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openkayak-v2.6-apks
+          name: openkayak-v2.7-aab-apk
           path: dist/*
           if-no-files-found: error
           retention-days: 90
 
-      - name: Publish v2.6 pre-release with both native APKs
+      - name: Publish v2.7 pre-release with AABs and debug APKs
         if: success() && github.ref == 'refs/heads/integration/main-to-native-v2.6'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.6
+          tag_name: v2.7
           target_commitish: ${{ github.sha }}
-          name: OpenKayak v2.6 · coach Gemini y escucha local optativa
+          name: OpenKayak v2.7 · paquetes AAB + APK
           prerelease: true
           draft: false
           overwrite_files: true
           fail_on_unmatched_files: true
           files: |
-            dist/OpenKayak-v2.6-WearOS.apk
-            dist/OpenKayak-v2.6-Android.apk
+            dist/OpenKayak-v2.7-WearOS.aab
+            dist/OpenKayak-v2.7-Android.aab
+            dist/OpenKayak-v2.7-WearOS-debug.apk
+            dist/OpenKayak-v2.7-Android-debug.apk
             dist/SHA256SUMS.txt
           body: |
-            OpenKayak v2.6 · integración nativa de cambios de Main y funciones móviles.
-            - Wear OS: escucha optativa de «Hola reloj» con el reconocedor local, solo mientras la app está en primer plano y la pantalla interactiva.
-            - Wear OS: detector de paladas sin periodo refractario adicional y con validación de regularidad temporal.
-            - Android móvil: pestaña Coach IA conectada a Gemini y campo de clave API.
-            - La clave del usuario se cifra en Android Keystore y solo queda en el móvil; no se sincroniza al reloj.
-            - El coach necesita Internet; la pregunta y el resumen de entrenamientos usado como contexto se envían a Google.
-            - Se mantienen GPX real, mapa, circuitos/boyas, sincronización Wear OS y Health Connect disponible en el reloj.
-            - SHA256SUMS.txt permite verificar la integridad de los APK.
-            Ambos archivos son APK debug para pruebas, no builds firmados para Google Play. La compatibilidad del reconocimiento local y la calidad de paladas/GPS deben comprobarse en el dispositivo real.
+            OpenKayak v2.7 · empaquetado AAB añadido para Wear OS y Android.
+            - AAB de variante release para reloj y móvil, construidos con Gradle.
+            - APK debug separados para instalar y probar directamente en dispositivos.
+            - Tests unitarios Android y build web ejecutados antes de publicar.
+            - SHA256SUMS.txt incluye hashes de los cuatro paquetes.
+            IMPORTANTE: estos AAB se compilan en variante release, pero no se firman con una clave de subida de Google Play en este workflow. Antes de subirlos a Google Play hay que configurar una clave de firma de publicación y su configuración segura en GitHub Actions. Los APK debug son para pruebas y no para publicar en Play.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
