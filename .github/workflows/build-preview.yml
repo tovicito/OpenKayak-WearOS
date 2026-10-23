@@ -44,7 +44,7 @@ jobs:
 
       - name: Build web application from Main
         run: |
-          npm ci
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Build native APKs and run unit tests
