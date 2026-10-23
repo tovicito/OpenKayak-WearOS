@@ -27,6 +27,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openkayak.phone.sync.PhoneSyncService
@@ -47,6 +49,7 @@ private val Muted = Color(0xFFA5B7C5)
 private val Trasona = LatLon(43.558, -5.91)
 
 private data class RouteColorOption(val label: String, val hex: String)
+private data class CoachChatMessage(val isUser: Boolean, val text: String)
 private val RouteColorOptions = listOf(
     RouteColorOption("Naranja", PhoneDataStore.ROUTE_COLOR_ORANGE),
     RouteColorOption("Cian", PhoneDataStore.ROUTE_COLOR_CYAN),
@@ -86,6 +89,41 @@ private fun OpenKayakPhone() {
     var zoom by remember { mutableIntStateOf(PhoneDataStore.mapZoom(context)) }
     var accuracy by remember { mutableFloatStateOf(PhoneDataStore.gpsAccuracy(context)) }
     var routeColorHex by remember { mutableStateOf(PhoneDataStore.routeColorHex(context)) }
+    var apiKeyText by remember { mutableStateOf(ApiKeyStore.get(context)) }
+    var chatInput by remember { mutableStateOf("") }
+    var chatBusy by remember { mutableStateOf(false) }
+    var chatMessages by remember {
+        mutableStateOf(listOf(CoachChatMessage(false, "Soy tu coach de piragüismo. Puedo analizar los entrenamientos que se hayan sincronizado en este móvil.")))
+    }
+
+    fun sendCoachMessage() {
+        val question = chatInput.trim()
+        if (question.isEmpty() || chatBusy) return
+        val key = ApiKeyStore.get(context)
+        if (key.isBlank()) {
+            chatMessages = chatMessages + CoachChatMessage(false, "Primero añade tu clave de Gemini en Ajustes. La clave se guarda cifrada en este móvil y no se envía al reloj.")
+            chatInput = ""
+            page = 2
+            return
+        }
+        val history = chatMessages.map { GeminiChatTurn(it.isUser, it.text) }
+        chatMessages = chatMessages + CoachChatMessage(true, question)
+        chatInput = ""
+        chatBusy = true
+        scope.launch {
+            try {
+                val answer = withContext(Dispatchers.IO) {
+                    GeminiCoach.reply(key, question, PhoneDataStore.allWorkouts(context), history)
+                }
+                chatMessages = chatMessages + CoachChatMessage(false, answer)
+            } catch (error: Exception) {
+                val message = error.message?.takeIf { it.isNotBlank() } ?: "No se pudo contactar con Gemini."
+                chatMessages = chatMessages + CoachChatMessage(false, "Error del coach: $message")
+            } finally {
+                chatBusy = false
+            }
+        }
+    }
 
     val circuitPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
@@ -146,6 +184,7 @@ private fun OpenKayakPhone() {
                 NavigationBarItem(selected = page == 0, onClick = { page = 0 }, icon = { Text("↻") }, label = { Text("Entrenos") })
                 NavigationBarItem(selected = page == 1, onClick = { page = 1 }, icon = { Text("⌖") }, label = { Text("Mapa y boyas") })
                 NavigationBarItem(selected = page == 2, onClick = { page = 2 }, icon = { Text("⚙") }, label = { Text("Ajustes") })
+                NavigationBarItem(selected = page == 3, onClick = { page = 3 }, icon = { Text("✦") }, label = { Text("Coach IA") })
             }
         },
         containerColor = Navy
@@ -190,14 +229,15 @@ private fun OpenKayakPhone() {
                             .onFailure { Toast.makeText(context, "No se pudo abrir Google Maps", Toast.LENGTH_SHORT).show() }
                     }
                 )
-                else -> SettingsPage(
-                    weightText, ageText, heightText, zoom, accuracy, routeColorHex,
+                2 -> SettingsPage(
+                    weightText, ageText, heightText, zoom, accuracy, routeColorHex, apiKeyText,
                     onWeight = { weightText = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.take(6) },
                     onAge = { ageText = it.filter(Char::isDigit).take(3) },
                     onHeight = { heightText = it.filter(Char::isDigit).take(3) },
                     onZoom = { zoom = it },
                     onAccuracy = { accuracy = it },
                     onRouteColor = { routeColorHex = it },
+                    onApiKey = { apiKeyText = it },
                     onSave = {
                         val weight = weightText.replace(',', '.').toDoubleOrNull()
                         val age = ageText.toIntOrNull()
@@ -205,11 +245,24 @@ private fun OpenKayakPhone() {
                         if (weight == null || age == null || height == null || weight !in 25.0..250.0 || age !in 8..100 || height !in 100..230) {
                             status = "Comprueba peso (25–250 kg), edad (8–100) y altura (100–230 cm)."
                         } else {
-                            PhoneDataStore.saveSettings(context, weight, age, height, zoom, accuracy, routeColorHex)
-                            PhoneSyncService.publishSettings(context, weight, age, height, zoom, accuracy, routeColorHex)
-                            status = "Ajustes guardados y enviados al reloj."
+                            val keySaved = runCatching { ApiKeyStore.save(context, apiKeyText) }.getOrDefault(false)
+                            if (!keySaved) {
+                                status = "No se pudo guardar la clave de Gemini de forma segura. Inténtalo de nuevo."
+                            } else {
+                                apiKeyText = ApiKeyStore.get(context)
+                                PhoneDataStore.saveSettings(context, weight, age, height, zoom, accuracy, routeColorHex)
+                                PhoneSyncService.publishSettings(context, weight, age, height, zoom, accuracy, routeColorHex)
+                                status = "Ajustes guardados y enviados al reloj. La clave de Gemini queda cifrada solo en este móvil."
+                            }
                         }
                     }
+                )
+                else -> CoachPage(
+                    messages = chatMessages,
+                    draft = chatInput,
+                    busy = chatBusy,
+                    onDraft = { chatInput = it },
+                    onSend = { sendCoachMessage() }
                 )
             }
         }
@@ -397,12 +450,72 @@ private fun MapAndBuoysPage(
 }
 
 @Composable
+private fun CoachPage(
+    messages: List<CoachChatMessage>,
+    draft: String,
+    busy: Boolean,
+    onDraft: (String) -> Unit,
+    onSend: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(bottom = 8.dp)) {
+        Text("COACH DE PIRAGÜISMO", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text("Consulta entrenamientos ya sincronizados. Las preguntas y el resumen enviado se procesan mediante la API de Gemini.", color = Muted, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(vertical = 8.dp)
+        ) {
+            items(messages) { message ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
+                ) {
+                    Surface(
+                        color = if (message.isUser) Color(0xFF17483F) else Panel,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.widthIn(max = 320.dp)
+                    ) {
+                        Text(
+                            message.text,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+            }
+            if (busy) {
+                item { Text("El coach está preparando la respuesta…", color = Muted, fontSize = 11.sp) }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraft,
+                modifier = Modifier.weight(1f),
+                label = { Text("Pregunta al coach") },
+                enabled = !busy,
+                maxLines = 3
+            )
+            Button(onClick = onSend, enabled = !busy && draft.isNotBlank()) { Text("Enviar") }
+        }
+    }
+}
+
+@Composable
 private fun SettingsPage(
     weightText: String, ageText: String, heightText: String, zoom: Int, accuracy: Float, routeColorHex: String,
+    apiKeyText: String,
     onWeight: (String) -> Unit, onAge: (String) -> Unit, onHeight: (String) -> Unit, onZoom: (Int) -> Unit,
-    onAccuracy: (Float) -> Unit, onRouteColor: (String) -> Unit, onSave: () -> Unit
+    onAccuracy: (Float) -> Unit, onRouteColor: (String) -> Unit, onApiKey: (String) -> Unit, onSave: () -> Unit
 ) {
-    Column(Modifier.fillMaxSize().padding(bottom = 16.dp)) {
+    var showApiKey by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().padding(bottom = 16.dp).verticalScroll(rememberScrollState())) {
         Text("AJUSTES DEL RELOJ", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         Text("Se aplican por Wear OS Data Layer cuando el reloj recibe la actualización.", color = Muted, fontSize = 12.sp)
         Spacer(Modifier.height(16.dp))
@@ -432,6 +545,24 @@ private fun SettingsPage(
                 )
             }
         }
+        Spacer(Modifier.height(16.dp))
+        Text("COACH CON GEMINI", color = Mint, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text(
+            "Pega una clave de Gemini AI Studio. Se cifra con Android Keystore y permanece en este móvil, sin sincronizarse con el reloj. Al enviar preguntas, el texto y el resumen de entrenamientos se transmiten a Google para generar la respuesta.",
+            color = Muted, fontSize = 11.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = apiKeyText,
+            onValueChange = onApiKey,
+            label = { Text("Clave de API de Gemini") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                TextButton(onClick = { showApiKey = !showApiKey }) { Text(if (showApiKey) "Ocultar" else "Mostrar") }
+            }
+        )
         Spacer(Modifier.height(14.dp))
         Text("Zoom inicial del mapa: Z" + zoom, color = Color.White)
         Slider(value = zoom.toFloat(), onValueChange = { onZoom(it.toInt()) }, valueRange = 14f..17f, steps = 2)
