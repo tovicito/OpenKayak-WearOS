@@ -168,7 +168,7 @@ private fun OpenKayakPhone() {
                 title = {
                     Column {
                         Text("OPENKAYAK", fontWeight = FontWeight.ExtraBold, letterSpacing = 2.sp)
-                        Text("V2.3 · CENTRO DE CONTROL", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
+                        Text("V2.6 · CENTRO DE CONTROL", color = Muted, fontSize = 10.sp, letterSpacing = 1.sp)
                     }
                 },
                 actions = {
