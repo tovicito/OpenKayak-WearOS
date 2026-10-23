@@ -938,7 +938,7 @@ private fun SettingsPage(
         }
         Spacer(Modifier.height(8.dp))
         Text("AOD: negro puro, cifras de alto contraste y refresco reducido. «SALIR AOD» solicita despertar la pantalla; el sistema puede exigir un toque para reactivarla.", color = Quiet, fontSize = 8.sp, textAlign = TextAlign.Center)
-        Text("Versión 2.5 · asistente de voz · unidades de velocidad", color = if (isAmbient) Color.DarkGray else Quiet,
+        Text("Versión 2.6 · «Hola reloj» optativo · paladas sin cooldown extra", color = if (isAmbient) Color.DarkGray else Quiet,
             fontSize = 7.sp, textAlign = TextAlign.Center)
     }
 }
