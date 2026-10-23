@@ -52,7 +52,7 @@ class WakeWordController(
         return recognizer != null
     }
 
-    fun stop() {
+    fun stop(reportStatus: Boolean = false) {
         enabled = false
         waitingForCommand = false
         commandTimeout?.let(handler::removeCallbacks)
@@ -64,7 +64,7 @@ class WakeWordController(
             runCatching { old.cancel() }
             runCatching { old.destroy() }
         }
-        onStatus("Escucha de «hola reloj» desactivada.")
+        if (reportStatus) onStatus("Escucha de «hola reloj» desactivada.")
     }
 
     private fun createRecognizerAndListen() {
