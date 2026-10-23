@@ -1,9 +1,9 @@
-name: OpenKayak v2.5 · asistente de voz y unidades de velocidad
+name: OpenKayak v2.6 · integración Android + web
 
 on:
   push:
     branches:
-      - rebuild/wearos5-expressive-oct2026
+      - integration/main-to-native-v2.6
   pull_request:
     branches:
       - main
@@ -14,9 +14,9 @@ permissions:
 
 jobs:
   build-test:
-    name: Build Wear OS + phone APKs (JDK 17 / Android 36)
+    name: Build and test web + Wear OS + Android
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -28,6 +28,12 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Configure Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
       - name: Install Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -36,45 +42,56 @@ jobs:
       - name: Install Android 36 platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Build and unit tests
+      - name: Build web application from Main
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build native APKs and run unit tests
         run: ./gradlew --no-daemon clean testDebugUnitTest :app:assembleDebug :phone:assembleDebug --stacktrace
 
-      - name: Name installable APKs
+      - name: Name real installable APKs
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.5-WearOS.apk
-          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.5-Android.apk
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -s phone/build/outputs/apk/debug/phone-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/OpenKayak-v2.6-WearOS.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk dist/OpenKayak-v2.6-Android.apk
           sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
+          file dist/*.apk
 
-      - name: Upload build artifacts
+      - name: Upload APKs as build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openkayak-v2.5-apks
+          name: openkayak-v2.6-apks
           path: dist/*
           if-no-files-found: error
           retention-days: 90
 
-      - name: Publish the two APKs together in one GitHub pre-release
-        if: success() && github.ref == 'refs/heads/rebuild/wearos5-expressive-oct2026'
+      - name: Publish v2.6 pre-release with both native APKs
+        if: success() && github.ref == 'refs/heads/integration/main-to-native-v2.6'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.5
+          tag_name: v2.6
           target_commitish: ${{ github.sha }}
-          name: OpenKayak v2.5 · asistente de voz y unidades de velocidad
+          name: OpenKayak v2.6 · coach Gemini y escucha local optativa
           prerelease: true
           draft: false
           overwrite_files: true
-          files: |
-            dist/OpenKayak-v2.5-WearOS.apk
-            dist/OpenKayak-v2.5-Android.apk
-            dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
+          files: |
+            dist/OpenKayak-v2.6-WearOS.apk
+            dist/OpenKayak-v2.6-Android.apk
+            dist/SHA256SUMS.txt
           body: |
-            OpenKayak v2.5 · asistente de voz y selector de unidades de velocidad. Ambos APK son builds debug para pruebas.
-            - Wear OS: comandos de voz en español para consultar distancia, velocidad y tiempo, marcar una vuelta y solicitar la finalización con confirmación.
-            - El reconocimiento prefiere el motor local cuando está disponible; el micrófono solo se activa al pulsar el botón.
-            - Selector de velocidad: km/h, mph y m/s.
-            - SHA256SUMS.txt contiene hashes SHA-256 para verificar las descargas.
-            Comprueba los comandos en el reloj real y verifica que el GPS continúa registrando durante la escucha.
+            OpenKayak v2.6 · integración nativa de cambios de Main y funciones móviles.
+            - Wear OS: escucha optativa de «Hola reloj» con el reconocedor local, solo mientras la app está en primer plano y la pantalla interactiva.
+            - Wear OS: detector de paladas sin periodo refractario adicional y con validación de regularidad temporal.
+            - Android móvil: pestaña Coach IA conectada a Gemini y campo de clave API.
+            - La clave del usuario se cifra en Android Keystore y solo queda en el móvil; no se sincroniza al reloj.
+            - El coach necesita Internet; la pregunta y el resumen de entrenamientos usado como contexto se envían a Google.
+            - Se mantienen GPX real, mapa, circuitos/boyas, sincronización Wear OS y Health Connect disponible en el reloj.
+            - SHA256SUMS.txt permite verificar la integridad de los APK.
+            Ambos archivos son APK debug para pruebas, no builds firmados para Google Play. La compatibilidad del reconocimiento local y la calidad de paladas/GPS deben comprobarse en el dispositivo real.
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
