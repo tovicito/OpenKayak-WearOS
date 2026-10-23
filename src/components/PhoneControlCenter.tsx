@@ -1217,24 +1217,25 @@ export const PhoneControlCenter: React.FC<PhoneControlCenterProps> = ({
                   </div>
 
                   <h4 className="text-white font-black text-base mb-1">
-                    OpenKayak-WearOS.apk
+                    OpenKayak-v2.5-WearOS.apk
                   </h4>
                   <p className="text-[11px] text-[#8D9DA8] leading-relaxed mb-4">
-                    App autónoma para el reloj montado en la cubierta: GPS de alta frecuencia, vueltas automáticas con vibración háptica, trazado de línea morada en AOD, y escucha activa de voz continua («Hola reloj»).
+                    App nativa para el reloj: registro GPS, mapa del recorrido, detección experimental de paladas, boyas/circuitos GPX, Health Connect y comandos de voz bajo demanda.
                   </p>
 
                   <div className="bg-[#07111c] rounded-xl p-3 text-[10px] space-y-1 mb-4 border border-[#1b2b3a]">
                     <div className="text-white font-bold">✓ Características activas en APK:</div>
-                    <div className="text-[#8D9DA8]">• Detección automática de paso por meta (±25m)</div>
-                    <div className="text-[#8D9DA8]">• Pantalla AOD con línea morada de boya a boya</div>
-                    <div className="text-[#8D9DA8]">• Micrófono siempre abierto para «Hola reloj»</div>
-                    <div className="text-[#8D9DA8]">• Compatible con Xiaomi Watch 2 Pro, Galaxy Watch, Pixel Watch</div>
+                    <div className="text-[#8D9DA8]">• GPS de sesión y mapa del recorrido</div>
+                    <div className="text-[#8D9DA8]">• Detección de paladas experimental, dependiente de la colocación del reloj</div>
+                    <div className="text-[#8D9DA8]">• Voz bajo demanda; no escucha la palabra clave continuamente en segundo plano</div>
+                    <div className="text-[#8D9DA8]">• GPX, circuitos y Health Connect según permisos y servicios compatibles</div>
                   </div>
                 </div>
 
                 <a
-                  href="/downloads/OpenKayak-WearOS.apk"
-                  download="OpenKayak-WearOS.apk"
+                  href="https://github.com/tovicito/OpenKayak-WearOS/releases/download/v2.5/OpenKayak-v2.5-WearOS.apk"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="w-full py-3 bg-gradient-to-r from-[#76F4D0] to-[#00F0FF] hover:opacity-95 text-[#05090D] font-black text-xs rounded-xl shadow-lg shadow-[#76F4D0]/20 flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
                 >
                   <span>📥</span>
@@ -1255,24 +1256,25 @@ export const PhoneControlCenter: React.FC<PhoneControlCenterProps> = ({
                   </div>
 
                   <h4 className="text-white font-black text-base mb-1">
-                    OpenKayak-Mobile.apk
+                    OpenKayak-v2.5-Android.apk
                   </h4>
                   <p className="text-[11px] text-[#8D9DA8] leading-relaxed mb-4">
-                    Centro de control móvil: Creador interactivo de circuitos con boyas punto a punto, compilador de entrenamientos por voz con IA Gemini, y Chatbot Coach con historial de los últimos 10 días.
+                    Centro de control Android: historial de sesiones sincronizadas, mapas, boyas, importación de circuitos GPX, gráficas y ajustes del perfil.
                   </p>
 
                   <div className="bg-[#07111c] rounded-xl p-3 text-[10px] space-y-1 mb-4 border border-[#1b2b3a]">
                     <div className="text-white font-bold">✓ Características activas en APK:</div>
-                    <div className="text-[#8D9DA8]">• Menú interactivo "Añadir circuitos" con GPS</div>
-                    <div className="text-[#8D9DA8]">• Chatbot Coach IA con análisis de cadencia y récords</div>
-                    <div className="text-[#8D9DA8]">• Generador de entrenamientos por intervalos con IA</div>
-                    <div className="text-[#8D9DA8]">• Sincronización bidireccional con Wear OS</div>
+                    <div className="text-[#8D9DA8]">• Historial de sesiones sincronizadas desde Wear OS</div>
+                    <div className="text-[#8D9DA8]">• Mapas, boyas e importación de circuitos GPX</div>
+                    <div className="text-[#8D9DA8]">• Gráficas de FC/velocidad y muestras de telemetría recibidas</div>
+                    <div className="text-[#8D9DA8]">• Perfil y ajustes sincronizables con el reloj</div>
                   </div>
                 </div>
 
                 <a
-                  href="/downloads/OpenKayak-Mobile.apk"
-                  download="OpenKayak-Mobile.apk"
+                  href="https://github.com/tovicito/OpenKayak-WearOS/releases/download/v2.5/OpenKayak-v2.5-Android.apk"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="w-full py-3 bg-gradient-to-r from-[#70C5F0] to-[#A855F7] hover:opacity-95 text-white font-black text-xs rounded-xl shadow-lg shadow-[#70C5F0]/20 flex items-center justify-center gap-2 active:scale-95 transition-all text-center"
                 >
                   <span>📥</span>
