@@ -1,37 +1,43 @@
-# OpenKayak 2.6 · Wear OS + Android
+# OpenKayak 2.7 · Wear OS + Android
 
-OpenKayak es una aplicación de piragüismo con una app nativa para el reloj Wear OS y un centro de control Android. Esta rama conserva además la aplicación web React/TypeScript de Google AI Studio, pero los APK descargables se compilan desde los módulos Android de Gradle. No se generan APK simulados a partir de HTML.
+OpenKayak es una aplicación de piragüismo con una app nativa para el reloj Wear OS y un centro de control Android. Esta rama conserva también la aplicación web React/TypeScript. Los paquetes Android se generan desde los módulos nativos de Gradle, nunca convirtiendo HTML en APK.
 
-## Cambios de esta integración
+## Paquetes de la versión 2.7
 
-- La pantalla de Ajustes del reloj permite activar «Hola reloj». Cuando está habilitado y hay reconocimiento local español disponible, el reloj escucha la palabra clave y puede responder a consultas de distancia, velocidad, tiempo y comandos compatibles.
-- El detector de paladas del reloj ya no aplica un periodo refractario adicional; aún valida la consistencia temporal de los picos para reducir recuentos erráticos. Es experimental y debe comprobarse en el kayak real.
-- El móvil incluye una pestaña «Coach IA» conectada a Gemini y un campo para introducir la clave API.
-- La clave de Gemini se cifra con AES-GCM usando Android Keystore y queda almacenada solo en el móvil. No se envía al reloj ni se incluye en el repositorio o en la URL. Para generar respuestas, el móvil transmite la pregunta y un resumen de los últimos entrenamientos a la API de Google; se necesita conexión a Internet y una clave válida.
-- Se conserva la app nativa de reloj/móvil con mapa, trazado GPS, historial, importación y exportación GPX, circuitos/boyas, BLE de frecuencia cardíaca, sincronización Wear OS Data Layer y escritura en Health Connect desde el reloj cuando el usuario otorga permisos.
+- **AAB Wear OS**: paquete Android App Bundle de la app del reloj, variante release.
+- **AAB Android**: paquete Android App Bundle de la app móvil, variante release.
+- **APK debug Wear OS y Android**: paquetes instalables para pruebas directas en dispositivos.
+- **SHA256SUMS.txt**: hashes SHA-256 de los cuatro paquetes para comprobar su integridad.
+
+Los AAB son el formato recomendado para distribuir aplicaciones mediante Google Play. En esta versión, los AAB se compilan en variante release pero **no están firmados con una clave de subida de Google Play**. Antes de subirlos a Play, hay que configurar la firma de publicación y guardar la clave/contraseñas como secretos de GitHub Actions. No subas un keystore ni contraseñas al repositorio. Los APK debug son para pruebas y no para publicar en Google Play.
+
+## Cambios funcionales incluidos en esta rama
+
+- Ajuste optativo «Hola reloj» con reconocimiento local compatible, solo mientras OpenKayak está en primer plano y la pantalla está interactiva.
+- Detector de paladas experimental con validación temporal.
+- Coach IA en Android conectado a Gemini, con clave API almacenada cifrada mediante Android Keystore.
+- Trazado GPS, historial, importación/exportación GPX, mapa, circuitos/boyas, BLE de frecuencia cardíaca, sincronización Wear OS Data Layer y escritura en Health Connect desde el reloj cuando se conceden permisos.
 
 ## Límites importantes
 
-«Hola reloj» es una escucha continua **optativa**, no un servicio de palabra de activación de bajo consumo a nivel de hardware. Solo funciona con OpenKayak en primer plano, pantalla interactiva y un motor de reconocimiento local compatible; se pausa al entrar en AOD o al salir de la app. Si el reloj no ofrece reconocimiento local español, usa el botón de voz bajo demanda o instala/activa un proveedor de voz local compatible. El permiso de micrófono es necesario.
+«Hola reloj» no es una palabra de activación de bajo consumo a nivel de hardware. Se pausa al entrar en AOD o al salir de la app y necesita micrófono y reconocimiento local compatible. El Coach IA necesita Internet; la pregunta y el resumen de entrenamientos enviado como contexto se procesan a través de Google. La detección de paladas es experimental, y la calidad de las métricas debe comprobarse en el dispositivo real.
 
-La clave de Gemini permanece cifrada en este móvil, pero el texto que se envía al coach y las estadísticas del entrenamiento incluidas en el contexto se procesan a través del servicio de Google. No introduzcas una clave si no confías en ese flujo. El coach es una función online y puede equivocarse; contrasta las métricas con el historial real.
-
-La detección de paladas es experimental. La calidad de distancia/velocidad depende del GPS; la frecuencia cardíaca depende de que haya muestras válidas de la banda. Las calorías son estimaciones. Comprueba GPS, sensores, sincronización, permisos y consumo de batería durante pruebas reales antes de depender de las métricas. Los APK de CI son builds debug para pruebas, no paquetes firmados para Google Play.
-
-## Compilar las apps nativas
+## Compilar los paquetes nativos
 
 Requiere JDK 17 y Android SDK Platform 36.
 
 ```bash
-./gradlew --no-daemon clean testDebugUnitTest :app:assembleDebug :phone:assembleDebug
+./gradlew --no-daemon clean testDebugUnitTest :app:bundleRelease :phone:bundleRelease :app:assembleDebug :phone:assembleDebug
 ```
 
-Los APK se generan en:
+Salidas de Gradle:
 
-- Wear OS: `app/build/outputs/apk/debug/app-debug.apk`
-- Android móvil: `phone/build/outputs/apk/debug/phone-debug.apk`
+- Wear OS AAB: `app/build/outputs/bundle/release/app-release.aab`
+- Android AAB: `phone/build/outputs/bundle/release/phone-release.aab`
+- Wear OS APK debug: `app/build/outputs/apk/debug/app-debug.apk`
+- Android APK debug: `phone/build/outputs/apk/debug/phone-debug.apk`
 
-## Compilar y ejecutar la aplicación web
+## Compilar la aplicación web
 
 Requiere Node.js 22 o compatible con las dependencias del proyecto.
 
@@ -41,8 +47,6 @@ npm run build
 npm run dev
 ```
 
-La versión web usa capacidades del navegador (por ejemplo, sensores, Bluetooth o reconocimiento de voz) y no sustituye a las apps Android nativas. No ejecutes scripts que etiqueten HTML como `.apk`: los APK deben salir de Gradle.
-
 ## Descargas
 
-Los APK de la integración se publican en la sección [Releases de GitHub](https://github.com/tovicito/OpenKayak-WearOS/releases). La release v2.6 solo debe considerarse disponible después de que el workflow haya terminado con éxito y los dos archivos APK estén adjuntos.
+Los paquetes se publican en [Releases de GitHub](https://github.com/tovicito/OpenKayak-WearOS/releases). La release v2.7 solo debe considerarse lista cuando GitHub Actions termine correctamente y muestre los dos AAB, los dos APK debug y el archivo de hashes.
