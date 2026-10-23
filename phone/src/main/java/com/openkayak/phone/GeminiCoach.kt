@@ -105,7 +105,7 @@ object GeminiCoach {
             val answer = (0 until parts.length()).mapNotNull { index ->
                 parts.optJSONObject(index)?.optString("text")?.takeIf { it.isNotBlank() }
             }.joinToString("\n").trim()
-            answer.ifBlank { throw IllegalStateException("Gemini devolvió una respuesta vacía.") }
+            return answer.ifBlank { throw IllegalStateException("Gemini devolvió una respuesta vacía.") }
         } finally {
             connection.disconnect()
         }
