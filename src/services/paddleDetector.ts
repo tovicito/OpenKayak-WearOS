@@ -5,24 +5,20 @@
  */
 export class PaddleDetector {
   private threshold: number;
-  private refractoryMs: number;
   private baseline = 0;
   private previousResidual = 0;
-  private lastStrokeMs = -Infinity;
   private initialized = false;
   private peakCount = 0;
   private lastPeakMs = -Infinity;
   private lastPeakInterval = 0;
 
-  constructor(threshold = 2.15, refractoryMs = 0) {
+  constructor(threshold = 2.15) {
     this.threshold = threshold;
-    this.refractoryMs = 0; // Removed refractory period as requested
   }
 
   public reset(): void {
     this.baseline = 0;
     this.previousResidual = 0;
-    this.lastStrokeMs = -Infinity;
     this.initialized = false;
     this.peakCount = 0;
     this.lastPeakMs = -Infinity;
@@ -74,7 +70,6 @@ export class PaddleDetector {
     if (this.peakCount < 3) return false;
     // Refractory period check removed for immediate responsive detection
 
-    this.lastStrokeMs = elapsedMs;
     return true;
   }
 }
