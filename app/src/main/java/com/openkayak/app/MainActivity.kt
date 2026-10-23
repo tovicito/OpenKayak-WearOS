@@ -43,6 +43,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.core.content.FileProvider
 import androidx.health.connect.client.PermissionController
 import androidx.wear.ambient.AmbientLifecycleObserver
@@ -72,6 +74,7 @@ import com.openkayak.app.tracking.TurnMemoryStore
 import com.openkayak.app.tracking.AppSettingsStore
 import com.openkayak.app.tracking.AthleteProfileStore
 import com.openkayak.app.tracking.OfflineMapStore
+import com.openkayak.app.tracking.WakeWordController
 import java.io.File
 import java.util.Locale
 import java.text.Normalizer
@@ -147,6 +150,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: () -> Unit) {
     val context = LocalContext.current
+    val hostActivity = context as? ComponentActivity
+    var isForeground by remember { mutableStateOf(false) }
+    DisposableEffect(hostActivity) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> isForeground = true
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> isForeground = false
+                else -> Unit
+            }
+        }
+        hostActivity?.lifecycle?.addObserver(observer)
+        onDispose { hostActivity?.lifecycle?.removeObserver(observer) }
+    }
     val permissionScope = rememberCoroutineScope()
     var snapshot by remember { mutableStateOf(TrackStore.snapshot(context)) }
     val hrManager = remember { BleManagerHolder.get(context) }
@@ -159,6 +175,7 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     var pendingReview by remember { mutableStateOf(SessionReviewStore.pending(context)) }
     var voiceStatus by remember { mutableStateOf("") }
     var activeRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
+    var wakeWordEnabled by remember { mutableStateOf(AppSettingsStore.wakeWordEnabled(context)) }
     val speechEngine = remember(context) {
         lateinit var engine: TextToSpeech
         engine = TextToSpeech(context) { status -> if (status == TextToSpeech.SUCCESS) engine.language = Locale("es", "ES") }
@@ -198,6 +215,18 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
             else -> speak("No he entendido el comando. Puedes preguntar por distancia, velocidad o tiempo, marcar una vuelta o pedir terminar el entrenamiento.")
         }
     }
+    val wakeWordController = remember(context) {
+        WakeWordController(
+            context = context,
+            onStatus = { voiceStatus = it },
+            onCommand = { handleVoiceCommand(it) },
+            onPrompt = { speak("Te escucho.") }
+        )
+    }
+    DisposableEffect(wakeWordController) {
+        onDispose { wakeWordController.stop() }
+    }
+
     fun startVoiceCapture() {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) { speak("El reconocimiento de voz no está disponible en este reloj."); return }
         runCatching {
@@ -238,6 +267,35 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
     fun activateVoiceAssistant() {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) startVoiceCapture()
         else microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    val wakeWordPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            AppSettingsStore.setWakeWordEnabled(context, true)
+            wakeWordEnabled = true
+        } else {
+            AppSettingsStore.setWakeWordEnabled(context, false)
+            wakeWordEnabled = false
+            speak("OpenKayak necesita permiso de micrófono para escuchar la palabra clave.")
+        }
+    }
+    fun setWakeWordEnabled(enabled: Boolean) {
+        if (!enabled) {
+            AppSettingsStore.setWakeWordEnabled(context, false)
+            wakeWordEnabled = false
+            wakeWordController.stop(reportStatus = true)
+            return
+        }
+        if (android.os.Build.VERSION.SDK_INT < 31 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+            voiceStatus = "Este reloj no tiene reconocimiento de voz local compatible para la palabra clave."
+            Toast.makeText(context, voiceStatus, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            AppSettingsStore.setWakeWordEnabled(context, true)
+            wakeWordEnabled = true
+        } else {
+            wakeWordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     val healthLauncher = rememberLauncherForActivityResult(
@@ -309,6 +367,18 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
         else {
             if (BuildCompat.bluetoothPermissionsGranted(context)) hrManager.connectSavedIfPresent()
             checkHealthPermissions()
+        }
+    }
+
+    LaunchedEffect(wakeWordEnabled, isForeground, isAmbient) {
+        if (wakeWordEnabled && isForeground && !isAmbient) {
+            if (!wakeWordController.start()) {
+                AppSettingsStore.setWakeWordEnabled(context, false)
+                wakeWordEnabled = false
+            }
+        } else {
+            // Always-on listening is opt-in and pauses whenever the watch app is backgrounded or ambient.
+            wakeWordController.stop()
         }
     }
 
@@ -387,7 +457,9 @@ private fun OpenKayakApp(isAmbient: Boolean, ambientTick: Int, onExitAmbient: ()
                     onSync = { enqueueSync(context) },
                     onExport = { exportGpx(context) },
                     mapPackStatus = mapPackStatus,
-                    onImportOfflineMap = { offlineMapPicker.launch(arrayOf("*/*")) }
+                    onImportOfflineMap = { offlineMapPicker.launch(arrayOf("*/*")) },
+                    wakeWordEnabled = wakeWordEnabled,
+                    onWakeWordChanged = { setWakeWordEnabled(it) }
                 )
                 else -> HistoryPage(context, isAmbient)
             }
@@ -791,7 +863,9 @@ private fun SettingsPage(
     onSync: () -> Unit,
     onExport: () -> Unit,
     mapPackStatus: String,
-    onImportOfflineMap: () -> Unit
+    onImportOfflineMap: () -> Unit,
+    wakeWordEnabled: Boolean,
+    onWakeWordChanged: (Boolean) -> Unit
 ) {
     var weightText by remember { mutableStateOf(String.format(Locale.US, "%.1f", AthleteProfileStore.weightKg(context))) }
     var ageText by remember { mutableStateOf(AthleteProfileStore.ageYears(context).toString()) }
@@ -818,6 +892,17 @@ private fun SettingsPage(
                     BasicTextField(value = heightText, onValueChange = { heightText = it.filter(Char::isDigit).take(3) }, singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp), modifier = Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(8.dp)).padding(7.dp))
                 }
             }
+            Text("ASISTENTE DE VOZ", color = Ice, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+            Text("«Hola reloj» usa reconocimiento local solo con esta app en primer plano y pantalla interactiva. Se pausa en AOD o al salir de la app.", color = Quiet, fontSize = 7.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(3.dp))
+            ActionPill(
+                if (wakeWordEnabled) "DESACTIVAR «HOLA RELOJ»" else "ACTIVAR «HOLA RELOJ»",
+                if (wakeWordEnabled) Pink else Panel2,
+                if (wakeWordEnabled) Night else Color.White,
+                { onWakeWordChanged(!wakeWordEnabled) },
+                Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(5.dp))
             Text("UNIDADES DE VELOCIDAD", color = Ice, fontSize = 8.sp, fontWeight = FontWeight.Bold)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf("km/h", "mph", "m/s").forEach { unit ->
