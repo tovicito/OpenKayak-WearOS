@@ -60,15 +60,12 @@ jobs:
           fi
 
       - name: Build web application from Main
-        if: steps.lockfile.outputs.changed != 'true'
         run: npm run build
 
       - name: Build native APKs and run unit tests
-        if: steps.lockfile.outputs.changed != 'true'
         run: ./gradlew --no-daemon clean testDebugUnitTest :app:assembleDebug :phone:assembleDebug --stacktrace
 
       - name: Name real installable APKs
-        if: steps.lockfile.outputs.changed != 'true'
         run: |
           mkdir -p dist
           test -s app/build/outputs/apk/debug/app-debug.apk
@@ -79,7 +76,6 @@ jobs:
           file dist/*.apk
 
       - name: Upload APKs as build artifacts
-        if: steps.lockfile.outputs.changed != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: openkayak-v2.6-apks
@@ -88,7 +84,7 @@ jobs:
           retention-days: 90
 
       - name: Publish v2.6 pre-release with both native APKs
-        if: success() && github.ref == 'refs/heads/integration/main-to-native-v2.6' && steps.lockfile.outputs.changed != 'true'
+        if: success() && github.ref == 'refs/heads/integration/main-to-native-v2.6'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v2.6
